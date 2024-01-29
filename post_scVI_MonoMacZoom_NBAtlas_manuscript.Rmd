@@ -1,0 +1,651 @@
+---
+title: "11c_post_scVI_MonoMacZoom_NBAtlas"
+author: "Noah Bonine"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(tidyverse)
+  library(scales)
+  library(RColorBrewer)
+  library(arrow)
+  library(Matrix)
+  library(UCell)
+  library(edgeR)
+})
+
+options(bitmapType='cairo')
+```
+
+```{r}
+set.seed(123)
+```
+
+```{r}
+setwd("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas")
+```
+
+```{r}
+output_dir <- "11c_post_scVI_MonoMacZoom_NBAtlas/"
+output_figures <- paste0(output_dir, "Figures/")
+output_tables <- paste0(output_dir, "Tables/")
+output_Robjects <- paste0(output_dir, "Robjects/")
+dir_SignaturePlots <- paste0(output_figures, "/SignaturePlots/")
+dir_FeaturePlots <- paste0(output_figures, "/FeaturePlots/")
+dir.create(output_dir)
+dir.create(output_figures)
+dir.create(output_tables)
+dir.create(output_Robjects)
+dir.create(dir_SignaturePlots)
+dir.create(dir_FeaturePlots)
+```
+
+# Harmony
+```{r}
+reduction_to_plot <- "harmony_umap"
+step <- "11c_post_scVI_MonoMacZoom_Harmony_"
+```
+
+## Original
+```{r}
+seuratObj <- NormalizeData(seuratObj, normalization.method = "LogNormalize") 
+seuratObj <- FindVariableFeatures(seuratObj)
+seuratObj <- ScaleData(seuratObj)
+seuratObj <- RunPCA(object = seuratObj, features = VariableFeatures(seuratObj), nfeatures.print = 10)
+ElbowPlot(object = seuratObj, ndims = 50)
+```
+
+```{r}
+dims <- 25
+seuratObj <- RunPCA(seuratObj, features = VariableFeatures(seuratObj), npcs = dims) #rerun
+PCAPlot(seuratObj, group.by = "Sample") & NoLegend()
+```
+
+```{r}
+theta <- c(2,10)
+maxIterCluster <- 150
+maxIterHarmony <- 20
+
+seuratObj <- RunHarmony(
+  seuratObj, theta = theta, group.by.vars = c("Sample","Study"), plot_convergence = TRUE, nclust = 50,
+  max.iter.cluster = maxIterCluster, max.iter.harmony = maxIterHarmony, dims.use = 1:dims
+)
+```
+
+```{r}
+DimPlot(seuratObj, reduction = "harmony", group.by = "Sample") & NoLegend()
+```
+
+```{r}
+res <- 0.8
+seuratObj <- seuratObj %>%
+  RunUMAP(reduction = "harmony", reduction.name = "harmony_umap",  dims = 1:dims) %>%
+  FindNeighbors(reduction = "harmony", dims = 1:dims) %>%
+  FindClusters(resolution = res)
+seuratObj
+```
+
+```{r}
+DimPlot(seuratObj, reduction = "harmony_umap", group.by = "Sample") & NoLegend()
+ggsave(filename = paste0(output_figures, step, "UMAPharmony_ColPerSample_", project, ".png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = "harmony_umap", group.by = "Assay")
+ggsave(filename = paste0(output_figures, step, "UMAPharmony_ColPerAssay_", project, ".png"), width = 9, height = 7)
+```
+```{r}
+FeaturePlot(seuratObj, reduction = "harmony_umap", c("CD68", "CSF1R","MAFB","SPP1","FOLR2","FLT3","RBP4","RRM2","VCAN"))
+```
+
+```{r}
+DimPlot(seuratObj, reduction = "harmony_umap", group.by = "RNA_snn_res.0.8", label = T)
+ggsave(filename = paste0(output_figures, step, "UMAPharmony_ColPerClustRes0.8_", project, ".png"), width = 9, height = 7)
+```
+
+```{r}
+meta <- "RNA_snn_res.0.8"
+Clusters <- levels(seuratObj@meta.data[,meta])
+  
+FindAllMarkers_results <- list()
+for (i in Clusters){
+  message(paste0("Working on: ", i))
+  ident1 <- i
+  ident2 <- Clusters[Clusters != i] # vs all
+  table <- FindMarkers(seuratObj, ident.1 = ident1, ident.2 = ident2, group.by = meta)
+  if ( dim(table)[1] != 0 ){ # only when there is output
+    table$gene <- rownames(table)
+    table$cluster <- rep(i, nrow(table))
+    table$score <- table$pct.1 / (table$pct.2 + 0.01) * table$avg_log2FC
+    
+    table <- table[ order(table$score, decreasing=TRUE), ]
+    FindAllMarkers_results[[paste0("c",i)]] <- table
+  }
+}
+openxlsx::write.xlsx(FindAllMarkers_results, file = paste0(output_tables, step, "_FindAllMarkers_", meta, "_", project,".xlsx"), overwrite = T)
+saveRDS(FindAllMarkers_results, file = paste0(output_Robjects, step, "_FindAllMarkers_", meta, "_", project, ".rds"))
+
+```
+```{r}
+# QC plots
+FeaturePlot(seuratObj, features = "nCount_RNA", reduction = reduction_to_plot) + scale_colour_viridis(option = "turbo")
+filename <- paste0(step, "_UMAP_nCountColored_",  project, ".png")
+ggsave(filename = filename, path = output_figures, width = 8, height = 7)
+FeaturePlot(seuratObj, features = "nFeature_RNA", reduction = reduction_to_plot) + scale_colour_viridis(option = "turbo")
+filename <- paste0(step, "_UMAP_nFeatureColored_",  project, ".png")
+ggsave(filename = filename, path = output_figures, width = 8, height = 7)
+FeaturePlot(seuratObj, features = "percent_mito", reduction = reduction_to_plot) + scale_colour_viridis(option = "turbo")
+filename <- paste0(step, "_UMAP_PercentMitoColored_",  project, ".png")
+ggsave(filename = filename, path = output_figures, width = 8, height = 7)
+```
+
+```{r}
+saveRDS(seuratObj, file = paste0(output_Robjects, step, "_Harmony_Sample2Assay10_", project, ".rds"))
+```
+
+```{r}
+seuratObj <- readRDS(file = paste0(output_Robjects, step, "_Harmony_Sample2Assay10_", project, ".rds"))
+```
+
+## Clean 1
+```{r}
+step <- "11c_post_scVI_MonoMacZoom_Harmony_Clean1"
+```
+
+```{r}
+cells_subset <- Cells(seuratObj)[!(seuratObj$RNA_snn_res.0.8 %in% c("11","10"))] #remove low quality/doublet clusters
+seuratObj <- subset(seuratObj, cells = cells_subset)
+seuratObj
+```
+
+```{r}
+seuratObj <- NormalizeData(seuratObj, normalization.method = "LogNormalize") 
+seuratObj <- FindVariableFeatures(seuratObj) 
+seuratObj <- ScaleData(seuratObj)
+seuratObj <- RunPCA(object = seuratObj, features = VariableFeatures(seuratObj), nfeatures.print = 10)
+ElbowPlot(object = seuratObj, ndims = 50)
+```
+
+```{r}
+dims <- 20
+seuratObj <- RunPCA(seuratObj, features = VariableFeatures(seuratObj), npcs = dims) #rerun
+PCAPlot(seuratObj, group.by = "Sample") & NoLegend()
+```
+
+```{r}
+theta <- c(2,10)
+maxIterCluster <- 150
+maxIterHarmony <- 20
+
+seuratObj <- RunHarmony(
+  seuratObj, theta = theta, group.by.vars = c("Sample","Study"), plot_convergence = TRUE, nclust = 50,
+  max.iter.cluster = maxIterCluster, max.iter.harmony = maxIterHarmony, dims.use = 1:dims
+)
+```
+
+```{r}
+DimPlot(seuratObj, reduction = "harmony", group.by = "Sample") & NoLegend()
+```
+
+```{r}
+res <- 0.8
+seuratObj <- seuratObj %>%
+  RunUMAP(reduction = "harmony", reduction.name = "harmony_umap",  dims = 1:dims) %>%
+  FindNeighbors(reduction = "harmony", dims = 1:dims) %>%
+  FindClusters(resolution = res)
+seuratObj
+seuratObj$`clusters_clean1_res0.8` <- seuratObj$seurat_clusters
+```
+
+```{r}
+DimPlot(seuratObj, reduction = "harmony_umap", group.by = "Sample") & NoLegend()
+ggsave(filename = paste0(output_figures, step, "UMAPharmony_ColPerSample_", project, ".png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = "harmony_umap", group.by = "Assay")
+ggsave(filename = paste0(output_figures, step, "UMAPharmony_ColPerAssay_", project, ".png"), width = 9, height = 7)
+```
+```{r}
+FeaturePlot(seuratObj, reduction = "harmony_umap", c("CD68", "CSF1R","MAFB","SPP1","FOLR2","RBP4","MKI67","VCAN", "HES4"), max.cutoff = "q98")
+```
+
+```{r}
+DimPlot(seuratObj, reduction = "harmony_umap", group.by = "RNA_snn_res.0.8", label = T)
+ggsave(filename = paste0(output_figures, step, "UMAPharmony_ColPerClustRes0.8_", project, ".png"), width = 9, height = 7)
+```
+
+```{r}
+DimPlot(seuratObj, reduction = "harmony_umap", group.by = "seurat_clusters", label = T)
+ggsave(filename = paste0(output_figures, step, "UMAPharmony_ColPerClustRes0.5_", project, ".png"), width = 9, height = 7)
+```
+
+```{r}
+saveRDS(seuratObj, file = paste0(output_Robjects, step, "_Harmony_Sample2Assay10_", project, ".rds"))
+```
+
+```{r}
+seuratObj <- readRDS(file = paste0(output_Robjects, step, "_Harmony_Sample2Assay10_", project, ".rds"))
+```
+
+```{r}
+DimPlot(seuratObj, reduction = reduction_to_plot, group.by = "seurat_clusters")
+table(seuratObj$seurat_clusters)
+```
+
+# Harmony Clean 2
+```{r}
+step <- "11c_post_scVI_MonoMacZoom_Harmony_Clean2" 
+reduction_to_plot <- "harmony_umap"
+project <- "NBAtlas"
+```
+
+```{r}
+Sample_colors <- readRDS("03c_post_scVI_R_plots/Robjects/UMAP_Sample_colors_v1.rds")
+```
+
+```{r}
+cells_subset <- Cells(seuratObj)[!(seuratObj$clusters_clean1_res0.8 %in% c("11"))] # remove small low quality cluster
+seuratObj <- subset(seuratObj, cells = cells_subset)
+seuratObj
+```
+```{r}
+seuratObj <- NormalizeData(seuratObj, normalization.method = "LogNormalize")
+seuratObj <- FindVariableFeatures(seuratObj)
+seuratObj <- ScaleData(seuratObj)
+seuratObj <- RunPCA(object = seuratObj, features = VariableFeatures(seuratObj), nfeatures.print = 10)
+ElbowPlot(object = seuratObj, ndims = 50)
+```
+
+```{r}
+dims <- 20
+seuratObj <- RunPCA(seuratObj, features = VariableFeatures(seuratObj), npcs = dims) #rerun
+PCAPlot(seuratObj, group.by = "Sample") & NoLegend()
+```
+
+```{r}
+theta <- c(2,10)
+maxIterCluster <- 150
+maxIterHarmony <- 20
+
+seuratObj <- RunHarmony(
+  seuratObj, theta = theta, group.by.vars = c("Sample","Study"), plot_convergence = TRUE, nclust = 50,
+  max.iter.cluster = maxIterCluster, max.iter.harmony = maxIterHarmony, dims.use = 1:dims
+)
+```
+
+```{r}
+DimPlot(seuratObj, reduction = "harmony", group.by = "Sample") & NoLegend()
+```
+
+```{r}
+res <- 0.8
+seuratObj <- seuratObj %>%
+  RunUMAP(reduction = "harmony", reduction.name = "harmony_umap",  dims = 1:dims) %>%
+  FindNeighbors(reduction = "harmony", dims = 1:dims) %>%
+  FindClusters(resolution = res)
+seuratObj
+seuratObj$`clusters_clean2_res0.8` <- seuratObj$seurat_clusters
+```
+
+```{r}
+DimPlot(seuratObj, reduction = "harmony_umap", group.by = "Sample") & NoLegend()
+ggsave(filename = paste0(output_figures, step, "UMAPharmony_ColPerSample_", project, ".png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = "harmony_umap", group.by = "Assay")
+ggsave(filename = paste0(output_figures, step, "UMAPharmony_ColPerAssay_", project, ".png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = "harmony_umap", group.by = "Study")
+ggsave(filename = paste0(output_figures, step, "UMAPharmony_ColPerStudy_", project, ".png"), width = 9, height = 7)
+```
+```{r}
+FeaturePlot(seuratObj, reduction = "harmony_umap", c("CD68", "CSF1R","MAFB","TREM2", "SPP1","FOLR2","RBP4","MKI67","VCAN", "HES4"), max.cutoff = "q98")
+ggsave(filename = paste0(output_figures, step, "_UMAP_MarkerGenes_", project, ".png"), width = 25, height = 20)
+```
+
+```{r}
+DimPlot(seuratObj, reduction = "harmony_umap", group.by = "clusters_clean2_res0.8", label = T)
+ggsave(filename = paste0(output_figures, step, "UMAPharmony_ColPerClean2ClustRes0.8_", project, ".png"), width = 9, height = 7)
+```
+
+```{r}
+seuratObj <- FindClusters(seuratObj, resolution = 0.5)
+seuratObj$`clusters_clean2_res0.5` <- seuratObj$seurat_clusters
+
+DimPlot(seuratObj, reduction = "harmony_umap", group.by = "clusters_clean2_res0.5", label = T)
+ggsave(filename = paste0(output_figures, step, "UMAPharmony_ColPerClean2ClustRes0.5_", project, ".png"), width = 9, height = 7)
+```
+
+```{r}
+# QC plots
+FeaturePlot(seuratObj, features = "nCount_RNA", reduction = reduction_to_plot) + scale_colour_viridis(option = "turbo")
+filename <- paste0(step, "_UMAP_nCountColored_",  project, ".png")
+ggsave(filename = filename, path = output_figures, width = 8, height = 7)
+FeaturePlot(seuratObj, features = "nFeature_RNA", reduction = reduction_to_plot) + scale_colour_viridis(option = "turbo")
+filename <- paste0(step, "_UMAP_nFeatureColored_",  project, ".png")
+ggsave(filename = filename, path = output_figures, width = 8, height = 7)
+FeaturePlot(seuratObj, features = "percent_mito", reduction = reduction_to_plot) + scale_colour_viridis(option = "turbo")
+filename <- paste0(step, "_UMAP_PercentMitoColored_",  project, ".png")
+ggsave(filename = filename, path = output_figures, width = 8, height = 7)
+```
+
+```{r}
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+
+seuratObj <- CellCycleScoring(seuratObj, s.features = s.genes, g2m.features = g2m.genes)
+
+# plot
+DimPlot(seuratObj, group.by = "Phase", reduction = reduction_to_plot)
+ggsave(filename = paste0(output_figures, step, "UMAPharmony_CellCyclePhase_", project, ".png"), width = 9, height = 7)
+```
+
+```{r}
+meta <- "clusters_clean2_res0.8"
+Clusters <- levels(seuratObj@meta.data[,meta])
+  
+FindAllMarkers_results <- list()
+for (i in Clusters){
+  message(paste0("Working on: ", i))
+  ident1 <- i
+  ident2 <- Clusters[Clusters != i] # vs all
+  table <- FindMarkers(seuratObj, ident.1 = ident1, ident.2 = ident2, group.by = meta)
+  if ( dim(table)[1] != 0 ){ # only when there is output
+    table$gene <- rownames(table)
+    table$cluster <- rep(i, nrow(table))
+    table$score <- table$pct.1 / (table$pct.2 + 0.01) * table$avg_log2FC
+    
+    table <- table[ order(table$score, decreasing=TRUE), ]
+    FindAllMarkers_results[[paste0("c",i)]] <- table
+  }
+}
+openxlsx::write.xlsx(FindAllMarkers_results, file = paste0(output_tables, step, "_FindAllMarkers_", meta, "_", project,".xlsx"), overwrite = T)
+saveRDS(FindAllMarkers_results, file = paste0(output_Robjects, step, "_FindAllMarkers_", meta, "_", project, ".rds"))
+```
+
+```{r}
+saveRDS(seuratObj, file = paste0(output_Robjects, step, "_Harmony_Sample2Assay10_", project, ".rds"))
+```
+## Reload
+```{r}
+step <- "11c_post_scVI_MonoMacZoom_Harmony_Clean2" 
+reduction_to_plot <- "harmony_umap"
+project <- "NBAtlas"
+
+seuratObj <- readRDS(file = paste0(output_Robjects, step, "_Harmony_Sample2Assay10_", project, ".rds"))
+```
+
+## Annotation
+```{r}
+seuratObj$annot_v1 <- "not assigned"
+
+seuratObj$annot_v1[seuratObj$clusters_clean2_res0.8 %in% c("6","0","11")] <- "FOLR2+ CD163+ mac" 
+seuratObj$annot_v1[seuratObj$clusters_clean2_res0.8 %in% c("5")] <- "MMP9+ PLA2G2D+ mac"
+seuratObj$annot_v1[seuratObj$clusters_clean2_res0.8 %in% c("12")] <- "BEST1+ LAM-like"
+seuratObj$annot_v1[seuratObj$clusters_clean2_res0.8 %in% c("4","9")] <- "LAM"
+seuratObj$annot_v1[seuratObj$clusters_clean2_res0.8 %in% c("10")] <- "Proliferating mac"
+seuratObj$annot_v1[seuratObj$clusters_clean2_res0.8 %in% c("13")] <- "RBP4+ LAM-like"
+seuratObj$annot_v1[seuratObj$clusters_clean2_res0.8 %in% c("3")] <- "FOLR2+ CETP+ HLAhi mac"
+seuratObj$annot_v1[seuratObj$clusters_clean2_res0.8 %in% c("2")] <- "High ribosomal mac"
+seuratObj$annot_v1[seuratObj$clusters_clean2_res0.8 %in% c("7")] <- "CLEC10A+ trans mono" 
+seuratObj$annot_v1[seuratObj$clusters_clean2_res0.8 %in% c("8")] <- "Patrolling mono"
+seuratObj$annot_v1[seuratObj$clusters_clean2_res0.8 %in% c("1","14")] <- "Classical mono"
+```
+
+```{r}
+DimPlot(seuratObj, reduction = reduction_to_plot, group.by = "annot_v1")
+ggsave(filename = paste0(output_figures, step, "_UMAP_AnnotV1_", project, ".png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = reduction_to_plot, group.by = "annot_v1", label = T, repel = T)
+ggsave(filename = paste0(output_figures, step, "_UMAP_AnnotV1_Labeled_", project, ".png"), width = 9, height = 7)
+```
+
+```{r}
+order_cs <- c("Classical mono", "Patrolling mono", "CLEC10A+ trans mono", "FOLR2+ CETP+ HLAhi mac", "FOLR2+ CD163+ mac", "MMP9+ PLA2G2D+ mac", "LAM","BEST1+ LAM-like", "RBP4+ LAM-like", "Proliferating mac", "High ribosomal mac")
+seuratObj$annot_v1_f <- factor(as.character(seuratObj$annot_v1), levels = order_cs)
+table(seuratObj$annot_v1_f, useNA = "ifany")
+seuratObj$annot_v1_f_rev <- factor(as.character(seuratObj$annot_v1), levels = rev(order_cs))
+
+colors_v1 <- hue_pal()(length(levels(as.factor(seuratObj$annot_v1))))
+names(colors_v1) <- order_cs
+
+colors_v1["Classical mono"] <- "#feb5f4"; colors_v1["Patrolling mono"] <- "#D394cb"; colors_v1["CLEC10A+ trans mono"] <- "#FF63B6"
+colors_v1["FOLR2+ CETP+ HLAhi mac"] <- "#c26876"; colors_v1["FOLR2+ CD163+ mac"] <- "#873036" ; colors_v1["MMP9+ PLA2G2D+ mac"] <- "#00C1A7" 
+colors_v1["LAM"] <- "#a715e8"; colors_v1["BEST1+ LAM-like"] <- "#B385FF"; colors_v1["RBP4+ LAM-like"] <- "#483566"
+colors_v1["Proliferating mac"] <- "#fdac48"; colors_v1["High ribosomal mac"] <- "#b29499"
+```
+
+```{r}
+DimPlot(seuratObj, reduction = reduction_to_plot, group.by = "annot_v1") + scale_color_manual(values = colors_v1)
+ggsave(filename = paste0(output_figures, step, "_UMAP_AnnotV1_Colored_", project, ".png"), width = 9, height = 7, dpi = 500)
+```
+
+```{r}
+meta <- "annot_v1"
+Clusters <- levels(as.factor(seuratObj@meta.data[,meta]))
+  
+FindAllMarkers_results <- list()
+for (i in Clusters){
+  message(paste0("Working on: ", i))
+  ident1 <- i
+  ident2 <- Clusters[Clusters != i] # vs all
+  table <- FindMarkers(seuratObj, ident.1 = ident1, ident.2 = ident2, group.by = meta)
+  if ( dim(table)[1] != 0 ){ # only when there is output
+    table$gene <- rownames(table)
+    table$cluster <- rep(i, nrow(table))
+    table$score <- table$pct.1 / (table$pct.2 + 0.01) * table$avg_log2FC
+    
+    table <- table[ order(table$score, decreasing=TRUE), ]
+    FindAllMarkers_results[[paste0("",i)]] <- table
+  }
+}
+names(FindAllMarkers_results) <- c("BEST1+ LAM-like","Classical mono","CLEC10A+ trans mono","FOLR2+ CD163+ mac", "FOLR2+ CETP+ HLAhi mac","  High ribosomal mac", "LAM","MMP9+ PLA2G2D+ mac", "Patrolling mono","Proliferating mac","RBP4+ LAM-like")
+openxlsx::write.xlsx(FindAllMarkers_results, file = paste0(output_tables, step, "_FindAllMarkers_", meta, "_", project,".xlsx"), overwrite = T)
+saveRDS(FindAllMarkers_results, file = paste0(output_Robjects, step, "_FindAllMarkers_", meta, "_", project, ".rds"))
+```
+
+```{r}
+saveRDS(seuratObj@meta.data, file = paste0(output_Robjects, step, "_SeuratMetadata_AnnotV1_", project, ".rds"))
+saveRDS(colors_v1, file = paste0(output_Robjects, step, "_colors_AnnotV1_", project, ".rds"))
+```
+
+## Reload
+```{r}
+MetaData <- readRDS(paste0(output_Robjects, step, "_SeuratMetadata_AnnotV1_", project, ".rds"))
+
+seuratObj$annot_v1 <- MetaData$annot_v1
+seuratObj$annot_v1_f <-  MetaData$annot_v1_f
+seuratObj$annot_v1_f_rev <-  MetaData$annot_v1_f_rev
+
+colors_v1 <- readRDS(paste0(output_Robjects, step, "_colors_AnnotV1_", project, ".rds"))
+```
+
+### Signatures
+```{r}
+ranks <- StoreRankings_UCell(seuratObj@assays[["RNA"]]@counts, force.gc = T)
+saveRDS(ranks, file = paste0(output_Robjects, step, "_UCell_PrecompRanks_", project, ".rds"))
+```
+
+```{r}
+Guilliams2022_LAMs <- c('SPP1','GPNMB','TREM2','EMP1','FABP5','FBP1','CAPG','ACP5','LGALS3','ANKRD28','CD9','PLA2G7','FAM20C')
+```
+
+```{r}
+signatures <- list(LAMs_signature = Guilliams2022_LAMs)
+```
+
+```{r}
+u.scores <- ScoreSignatures_UCell(features = signatures, precalc.ranks = ranks, force.gc = T) #
+u.scores <- as.data.frame(u.scores)
+saveRDS(u.scores, file = paste0(output_Robjects, step, "_UCellScores_LAMs_", project, ".rds"))
+```
+
+```{r}
+u.scores <- readRDS(paste0(output_Robjects, step, "_UCellScores_LAMs_", project, ".rds"))
+  
+seuratObj <- AddMetaData(seuratObj, u.scores)
+```
+
+```{r}
+FeaturePlot(seuratObj, features = c("LAMs_signature_UCell"), reduction = reduction_to_plot, min.cutoff = "q2", max.cutoff = "q98", order = T, raster = F) + red_blue_color_scale11
+ggsave(paste0(dir_SignaturePlots, step, "_SignaturePlot_UCell_", "LAMs_", project, ".png"), width = 9, height = 7)
+```
+
+```{r}
+# Xue2014 M1/M2 modules: https://doi.org/10.1016/j.immuni.2014.01.006
+signatures <- list(Xue2014_M1_Module7 = Xue2014_M1_Module7, Xue2014_M1_Module8 = Xue2014_M1_Module8, Xue2014_M1_Module9 = Xue2014_M1_Module9, Xue2014_M2_Module13 = Xue2014_M2_Module13, Xue2014_M2_Module14 = Xue2014_M2_Module14, Xue2014_M2_Module15 = Xue2014_M2_Module15)
+```
+
+```{r}
+u.scores <- ScoreSignatures_UCell(features = signatures, precalc.ranks = ranks, force.gc = T) #
+
+u.scores <- as.data.frame(u.scores)
+saveRDS(u.scores, file = paste0(output_Robjects, step, "_UCellScores_Xue2014_M1-M2_Modules_", project, ".rds"))
+```
+
+```{r}
+u.scores <- readRDS(paste0(output_Robjects, step, "_UCellScores_Xue2014_M1-M2_Modules_", project, ".rds"))
+
+seuratObj <- AddMetaData(seuratObj, u.scores)
+```
+
+```{r}
+for (Sign in colnames(u.scores)){
+  FeaturePlot(seuratObj, features = Sign, reduction = reduction_to_plot, min.cutoff = 0, max.cutoff = "q98", raster = F) + red_blue_color_scale11
+  ggsave(paste0(dir_SignaturePlots, step, "_SignaturePlot_UCell_", Sign, "_", project, ".png"), width = 9, height = 7)
+}
+```
+
+```{r}
+seuratObj$Guilliams2022_LAM_UCell <- seuratObj$LAMs_signature_UCell
+
+# av heatmap Xu M1-M2 signatures (+ LAM) vs annot
+heatmap <- seuratObj@meta.data[,c("annot_v1" ,c("Guilliams2022_LAM_UCell", colnames(u.scores)))] #
+melted <- reshape2::melt(heatmap, id.vars = c("annot_v1"))
+
+cluster_means <- melted %>% group_by(annot_v1, variable) %>% summarize(median(value))
+matrix_full <- reshape2::dcast(cluster_means, annot_v1 ~ variable)
+matrix <- matrix_full
+rownames(matrix) <- matrix[,1] #first column
+matrix <- matrix[,-1]
+
+p <- pheatmap::pheatmap(t(matrix), 
+                        color = colorRampPalette(colors = rev(brewer.pal(n = 11, name = "RdBu")))(200), #blue_red_color_50_values, #
+                        cluster_rows = F, 
+                        cluster_cols = T,
+                        clustering_method = "ward.D2",
+                        angle_col = 315)
+p
+svg(filename =  paste0(output_figures, step, "_MeanHeatMap_AnnotV1_UCell_Xue2014_M1-M2_LAM_BlueRed_", project, ".svg"), width = 8, height = 5)
+p
+dev.off()
+```
+
+Activation markers
+```{r}
+activation_markers <- c("IL18","TNF","IL1B","IL12A","IFNG","IL10","TGFB1","IL4","IL13","CCL2","CCL3","CCL4","CCL5","CCL7","CCL8","CCL24","SPP1","CXCL1","CXCL2","CXCL3","CXCL9","CXCL10","CXCL11","ITGAX","GPR18","FPR2","TLR2","SOCS3","CD40","CD80","CD86","TLR4","CD38","NOS2","IL1R1","CHIL3","ARG1","MYC","MRC1","CD200R1","EGR2","TGM2","ABCA1","CD36","PLIN2")
+
+activation_markers[!(activation_markers %in% rownames(seuratObj@assays$RNA))] # CHIL3
+
+activation_markers <- activation_markers[activation_markers %in% rownames(seuratObj@assays$RNA)]
+```
+```{r}
+DotPlot(seuratObj, features = activation_markers, group.by = "annot_v1_f_rev") + blue_red_color_scaleg2 & RotatedAxis() 
+ggsave(filename = paste0(output_figures, step, "_DotPlot_ActivationMarkers_", project, ".svg"), width = 13, height = 4)
+```
+
+## Metadata
+```{r}
+MetaData <- readRDS("03c_post_scVI_R_plots/Robjects/03c_post_scVI_R_MetaData_PatientMetaData.rds")
+cellnames_intersect <- rownames(MetaData)[ rownames(MetaData) %in% Cells(seuratObj)]
+seuratObj$Platform <- "not assigned" 
+seuratObj@meta.data[cellnames_intersect,]["Platform"] <- MetaData[cellnames_intersect,]["Platform"]
+seuratObj$INSS_stage <- "not assigned" #initialize
+seuratObj@meta.data[cellnames_intersect,]["INSS_stage"] <- MetaData[cellnames_intersect,]["INSS_stage"]
+seuratObj$Timepoint <- "not assigned" #initialize
+seuratObj@meta.data[cellnames_intersect,]["Timepoint"] <- MetaData[cellnames_intersect,]["Timepoint"]
+seuratObj$Risk_group <- "not assigned" #initialize
+seuratObj@meta.data[cellnames_intersect,]["Risk_group"] <- MetaData[cellnames_intersect,]["Risk_group"]
+seuratObj$MYCN_amplification <- "not assigned" #initialize
+seuratObj@meta.data[cellnames_intersect,]["MYCN_amplification"] <- MetaData[cellnames_intersect,]["MYCN_amplification"]
+seuratObj$Simplified_Risk <- "not assigned" #initialize
+seuratObj@meta.data[cellnames_intersect,]["Simplified_Risk"] <- MetaData[cellnames_intersect,]["Simplified_Risk"]
+```
+
+```{r}
+timepoint_colors <- hue_pal()(length(levels(as.factor(seuratObj$Timepoint))))
+timepoint_colors[length(timepoint_colors)] <- "gray"
+```
+
+```{r}
+DimPlot(seuratObj, reduction = reduction_to_plot,  group.by = "Timepoint", cols = timepoint_colors)
+ggsave(filename = paste0(output_figures, step, "_UMAP_Timepoint_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = reduction_to_plot,  group.by = "MYCN_amplification")
+ggsave(filename = paste0(output_figures, step, "_UMAP_MYCNamplification_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = reduction_to_plot,  group.by = "Simplified_Risk")
+ggsave(filename = paste0(output_figures, step, "_UMAP_SimplifiedRisk_NBAtlas.png"), width = 9, height = 7)
+```
+
+```{r}
+# Risk
+seuratObj@meta.data %>% ggplot(aes(x=Simplified_Risk, fill = annot_v1)) + geom_bar() + theme_point + scale_fill_manual(values = colors_v1) 
+ggsave(filename = paste0(output_figures, step, "_BarPlotCount_AnnotV1_Per_SimplifiedRisk_NBAtlas.svg"), width = 6, height = 9)
+
+seuratObj@meta.data %>% ggplot(aes(x=Simplified_Risk, fill = annot_v1)) + geom_bar(position = "fill") + theme_point + ylab("Rel. frequency") + scale_fill_manual(values = colors_v1)
+ggsave(filename = paste0(output_figures, step, "_BarPlotStacked_AnnotV1_Per_SimplifiedRisk_NBAtlas.svg"), width = 6, height = 9)
+```
+
+```{r}
+# Patients per clusters
+seuratObj@meta.data %>% filter(annot_v1 != "Doublets") %>% ggplot() + geom_bar(aes(x = annot_v1_f, fill = Sample), position = "fill") + theme_bar_straight + ylab("Relative abundance") + scale_fill_manual(values = Sample_colors) & RotatedAxis() & NoLegend()
+ggsave(filename = paste0(step, "_BarPlot_Patients_Per_AnnotV1_final_", project, ".pdf"), path = output_figures, width = 8, height = 7)
+
+# Clusters per patient
+seuratObj@meta.data  %>% filter(annot_v1 != "Doublets") %>% ggplot() + geom_bar(aes(x = Sample, fill = annot_v1_f), position = "fill") + theme_bar_straight + ylab("Relative abundance") + scale_fill_manual(values = colors_v1) & RotatedAxis()
+ggsave(filename = paste0(step, "_BarPlot_Clusters_Per_AnnotV1_final_", project, ".pdf"), path = output_figures, width = 12, height = 7)
+```
+
+```{r}
+length(levels(as.factor(seuratObj$Sample)))
+
+annot_vs_SimplifiedRisk <- seuratObj@meta.data %>% group_by(annot_v1, Simplified_Risk) %>% summarize(n())
+write.table(annot_vs_SimplifiedRisk, file = paste0(output_tables, step, "_FreqTable_Annot_vs_SimplifiedRisk_", project,".csv"), row.names = T, col.names = T, sep = ",")
+
+table(seuratObj$Simplified_Risk) 
+```
+
+```{r}
+seuratObj$Simplified_Risk_f <- factor(seuratObj$Simplified_Risk, levels = c("Low/Intermediate","High"))
+
+seuratObj@meta.data %>% ggplot(aes(x=annot_v1_f, fill = Simplified_Risk_f)) + geom_bar(position = "fill") + theme_point + ylab("Rel. frequency") + scale_fill_manual(values = c("#3ECD33", "#C50B0B")) + geom_hline(yintercept = 0.785, color = "black", linetype = "dashed") & RotatedAxis()
+ggsave(filename = paste0(output_figures, step, "_BarPlotStacked_AnnotV1_vs_SimplifiedRisk_DashedLine_Sorted_HR_NBAtlas.svg"), width = 5, height = 4)
+```
+```{r}
+# edgeR stats
+abundances <- table(seuratObj$annot_v1[seuratObj$annot_v1 != "Doublets"], seuratObj$Sample[seuratObj$annot_v1 != "Doublets"]) 
+abundances <- unclass(abundances)
+
+metaData <- seuratObj@meta.data %>% group_by(Sample, Simplified_Risk) %>% summarize() metaData <- as_data_frame(metaData)
+rownames(metaData) <- metaData$Sample
+condition_per_sample <- metaData[colnames(abundances),][-1]
+
+y.ab <- DGEList(abundances, samples=condition_per_sample)
+y.ab
+
+design <- model.matrix(~factor(Simplified_Risk), y.ab$samples)
+ 
+y.ab <- estimateDisp(y.ab, design, trend = "none")
+summary(y.ab$common.dispersion)
+
+fit.ab <- glmQLFit(y.ab, design, robust=TRUE, abundance.trend=FALSE)
+summary(fit.ab$var.prior)
+ 
+plotQLDisp(fit.ab, cex=1)
+ 
+res <- glmQLFTest(fit.ab, coef=ncol(design))
+summary(decideTests(res))
+ 
+topTags(res, n = Inf)
+#ns
+```

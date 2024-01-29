@@ -1,0 +1,184 @@
+---
+title: "03b_post_scVI_R_NBAtlas"
+author: "Noah Bonine"
+date: "`r Sys.Date()`"
+output: html_document
+html_document:
+    theme: cosmo
+    highlight: textmate
+    df_print: paged
+    toc: true
+    toc_depth: 2
+params:
+    output_dir: x
+    step: x
+    project: x
+    norm_h5ad: x
+    scvi_h5ad: x
+    output_name: x
+
+---
+
+Custom code:
+ml scvi-tools/0.16.4-foss-2021a
+ml R-bundle-Bioconductor/3.13-foss-2021a-R-4.1.0
+ml rmarkdown/2.20-foss-2021a-R-4.1.0
+
+```{r}
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(tidyverse)
+  library(reticulate)
+})
+
+options(bitmapType='cairo')
+```
+```{r}
+setwd("/kyukon/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas")
+```
+
+```{r}
+output_dir <- params$output_dir
+dir.create(output_dir)
+
+output_figures <- paste0(output_dir, "Figures/")
+dir.create(output_figures)
+
+output_Robjects <- paste0(output_dir, "Robjects/")
+dir.create(output_Robjects)
+
+step <- params$step
+project <- params$project
+```
+
+```{r}
+norm_h5ad <- params$norm_h5ad
+scvi_h5ad <- params$scvi_h5ad 
+
+#R obj output name
+output_name <- params$output_name
+```
+
+
+```{r}
+py <- import_builtins()
+sc <- import("scanpy")
+```
+
+```{r}
+# helper-function to convert dgRMatrix from sc to dgCMatrix for Seurat
+transpose_dgRMatrix <- function(inmat) {
+  # https://rdrr.io/github/barkasn/nbHelpers/src/R/misc.R  
+  if(class(inmat) != 'dgRMatrix')
+        stop('inmat is not of class dgRMatrix')
+    out <- new('dgCMatrix',
+               i=inmat@j,
+               p=inmat@p,
+               x=inmat@x,
+               Dim=rev(inmat@Dim),
+               Dimnames=rev(inmat@Dimnames)
+               )
+    out
+}
+```
+
+```{r}
+# load adata_full
+adata_full <- sc$read(norm_h5ad)
+adata_full
+```
+
+```{r}
+# counts slot
+counts <- adata_full$layers["counts"] #dgRMatrix
+dim(counts) # cells x genes (-> need to transpose) 31570 32475
+counts_t <- transpose_dgRMatrix(counts)
+dim(counts_t)
+rm(counts)
+counts_t@Dimnames[[1]] <- adata_full$var_names$to_list() #genes
+counts_t@Dimnames[[2]] <- adata_full$obs_names$to_list() #cells
+```
+
+```{r}
+# data slot: extract normalized counts data for all gene
+data <- adata_full$X
+dim(data)
+data_t <- transpose_dgRMatrix(data)
+dim(data_t)
+data_t@Dimnames[[1]] <- adata_full$var_names$to_list() #genes
+data_t@Dimnames[[2]] <- adata_full$obs_names$to_list() #cells
+rm(data)
+```
+
+```{r}
+seuratObj <- CreateSeuratObject(counts_t)
+seuratObj <- SetAssayData(seuratObj, "data", data_t) # add data slot
+```
+
+```{r load_scvi_normalized_values}
+# load adata
+adata <- sc$read(scvi_h5ad) #dgRMatrix which will be transposed and coverted to dgCMatrix
+adata
+```
+
+```{r}
+# Add scvi_umap embedding from adata (or could also be from adata_combined)
+embedding <- adata$obsm["X_umap"] #or could be scvi_umap
+rownames(embedding) <- adata$obs_names$to_list()
+colnames(embedding) <- c("umap_1", "umap_2")
+seuratObj[["scvi_umap"]] <- CreateDimReducObject(embedding, key = "scVIumap_")
+```
+
+```{r}
+# Add unintegrated umap
+rm(embedding)
+embedding <- adata$obsm["X_umap_NoInt"]
+#embedding <- adata_full$obsm["X_umap"]
+#rownames(embedding) <- adata_full$obs_names$to_list()
+rownames(embedding) <- adata$obs_names$to_list()
+colnames(embedding) <- c("umap_1", "umap_2")
+seuratObj[["umap_NoInt"]] <- CreateDimReducObject(embedding, key = "UMAP_") #or add umap_NoInt to key
+```
+
+```{r}
+# add metadata
+seuratObj <- AddMetaData(seuratObj, adata$obs)
+```
+
+```{r save_lightweight}
+# lightweight version without scvi assay
+saveRDS(seuratObj, paste0(output_Robjects, step, "_", output_name,"_seuratObj_NormOnly_", project, ".rds"))
+```
+
+```{r}
+# extract scvi-normalized values
+denoised_genes <- adata$layers['scvi_normalized'] #dgRMatrix
+dim(denoised_genes) # cells x genes (but needs to be genes x cells)
+```
+
+```{r}
+denoised_genes_t <- transpose_dgRMatrix(denoised_genes)
+dim(denoised_genes_t) #genes x cells
+denoised_genes_t@Dimnames[[1]] <- adata$var_names$to_list() #genes
+denoised_genes_t@Dimnames[[2]] <- adata$obs_names$to_list() #cells
+rm(denoised_genes)
+```
+
+```{r}
+scvi_assay <- CreateAssayObject(denoised_genes_t)
+scvi_assay
+```
+
+```{r}
+# add scvi normalized assay
+seuratObj[["scvi"]] <- scvi_assay
+```
+
+```{r}
+rm(counts_t, data_t, denoised_genes_t, scvi_assay)
+gc()
+```
+
+```{r save_seurat}
+saveRDS(seuratObj, paste0(output_Robjects, step, "_", output_name,"_seuratObj_", project, ".rds"))
+```

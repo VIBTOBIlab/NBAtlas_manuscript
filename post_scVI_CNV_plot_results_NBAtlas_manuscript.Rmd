@@ -1,0 +1,231 @@
+---
+title: "03f_post_scVI_CNV_plot_results"
+author: "Noah Bonine"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(copykat)
+  library(dlm)
+  library(Seurat)
+  library(tidyverse)
+  library(RColorBrewer)
+})
+
+options(bitmapType='cairo')
+
+set.seed(123)
+```
+
+```{r}
+project <- "NBAtlas"
+step <- "03f_post_scVI"
+
+output_dir <- "/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03f_post_scVI_CNV_plot_results/"
+output_figures <- paste0(output_dir, "/Figures/")
+output_Robjects <- paste0(output_dir, "/Robjects/")
+
+dir.create(output_dir)
+dir.create(output_figures)
+dir.create(output_Robjects)
+```
+
+```{r}
+seuratObj <- readRDS("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03b_post_scVI_R_NBAtlas/Robjects/03b_post_scVI_scVI_covSample_moreEpochs20230322_seuratObj_NormOnly_NBAtlas.rds")
+```
+
+# CopyKAT
+```{r}
+seuratObj$copykat_results <- "not.run"
+```
+
+```{r}
+sampleList <- levels(as.factor(seuratObj$Sample))
+
+#samples with too few reference cells
+sampleList_copykat <- sampleList[!(sampleList %in% c("Jansky2021_NB01", "Jansky2021_NB11", "Jansky2021_NB05", "Jansky2021_NB08", "Jansky2021_NB10", "Kildisiute2021_10X_PD42752-1", "Kildisiute2021_10X_PD42752-2", "Slyper2020_cell_HTAPP_312_SMP_901", "Costa2022_TR2", "Costa2022_TD6"))]
+```
+
+## Plot per sample
+```{r}
+for (sample in sampleList_copykat){
+  seuratObj$copykat_results <- "not.run"
+  copykat_pred <- read.table(paste0("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03d_post_scVI_CopyKAT_NBAtlas/",sample,"_copykat_prediction.txt"), header = T) #or Robj
+  rownames(copykat_pred) <- copykat_pred$cell.names
+  cellnames_intersect <- copykat_pred$cell.names[copykat_pred$cell.names %in% Cells(seuratObj)]
+  seuratObj@meta.data[cellnames_intersect,]["copykat_results"] <- copykat_pred[cellnames_intersect,]["copykat.pred"]
+  
+  my_colors <- hue_pal()(length(levels(factor(seuratObj$copykat_results)))) # setup colors
+  my_colors[ levels(factor(seuratObj$copykat_results)) == "not.run"  ] <- "gray" # gray for NA
+  names(my_colors) <- levels(factor(seuratObj$copykat_results))
+  
+  DimPlot(seuratObj, group.by = "copykat_results") + scale_color_manual(name = "copykat_results", values = my_colors)
+  ggsave(filename = paste0(output_figures, step, "_CopyKAT_Results_", sample, "_", project, ".png"), width = 9, height = 7)
+}
+```
+
+## All
+```{r}
+seuratObj$copykat_results <- "not.run"
+copykat_pred <- c()
+
+for (sample in sampleList_copykat){
+  copykat_pred_sample <- read.table(paste0("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03d_post_scVI_CopyKAT_NBAtlas/",sample,"_copykat_prediction.txt"), header = T)
+  copykat_pred <- rbind(copykat_pred, copykat_pred_sample)
+}
+
+rownames(copykat_pred) <- copykat_pred$cell.names
+  
+cellnames_intersect <- copykat_pred$cell.names[copykat_pred$cell.names %in% Cells(seuratObj)]
+seuratObj@meta.data[cellnames_intersect,]["copykat_results"] <- copykat_pred[cellnames_intersect,]["copykat.pred"]
+
+my_colors <- hue_pal()(length(levels(factor(seuratObj$copykat_results)))) # setup colors
+my_colors[ levels(factor(seuratObj$copykat_results)) == "not.run"  ] <- "#ACC6CF" # lightblue for not run
+my_colors[ levels(factor(seuratObj$copykat_results)) == "not.defined"  ] <- "darkgray" # gray for NA
+
+names(my_colors) <- levels(factor(seuratObj$copykat_results))
+
+DimPlot(seuratObj, group.by = "copykat_results") + scale_color_manual(name = "copykat_results", values = my_colors)
+ggsave(filename = paste0(output_figures, step, "_CopyKAT_Results_AllSamples_", project, ".png"), width = 9, height = 7)
+
+DimPlot(seuratObj, group.by = "copykat_results", raster = FALSE) + scale_color_manual(name = "copykat_results", values = my_colors)
+ggsave(filename = paste0(output_figures, step, "_CopyKAT_Results_AllSamples_HD_", project, ".png"), width = 15, height = 12)
+```
+
+
+```{r}
+# add metadata
+MetaDataForiCNV <- read.csv("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03c_post_scVI_R_plots/Tables/03c_post_scVI_R_plots_covSample_MetaDataForInferCNV.csv", header = T)
+
+cellnames_intersect <- rownames(MetaDataForiCNV)[ rownames(MetaDataForiCNV) %in% Cells(seuratObj)]
+length(cellnames_intersect)
+length(rownames(MetaDataForiCNV))
+
+seuratObj$annot_NBN_iCNV <- "not assigned"
+seuratObj@meta.data[cellnames_intersect,]["annot_NBN_iCNV"] <- MetaDataForiCNV[cellnames_intersect,]["annot_NBN_iCNV"]
+```
+# InferCNV
+## Score
+```{r}
+infercnv_scores_table <- read.csv("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03e_post_scVI_inferCNV_NBAtlas/03e_post_scVI_inferCNV_NBAtlas_cnvscores_VZZ.csv", header = T)
+
+infercnv_scores_table$cellname <- infercnv_scores_table$X
+rownames(infercnv_scores_table) <- infercnv_scores_table$X
+```
+
+```{r}
+length(infercnv_scores_table$cellname)
+cellnames_intersect <- infercnv_scores_table$cellname[ infercnv_scores_table$cellname %in% Cells(seuratObj)]
+length(cellnames_intersect)
+
+seuratObj$infercnv_score <- NA
+seuratObj@meta.data[cellnames_intersect,]["infercnv_score"] <- infercnv_scores_table[cellnames_intersect,]["cnv_score"]
+```
+
+```{r}
+FeaturePlot(seuratObj, reduction = "scvi_umap", features = "infercnv_score", order = T, min.cutoff = "q2", max.cutoff = "q98" ) +
+  scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdBu")))
+ggsave(filename = paste0(output_figures, step, "_InferCNV_score_AllSamples_", project, ".png"), width = 9, height = 7)
+
+FeaturePlot(seuratObj, reduction = "scvi_umap", features = "infercnv_score", order = T, min.cutoff = "q2", max.cutoff = "q98", raster = FALSE ) +
+  scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdBu")))
+ggsave(filename = paste0(output_figures, step, "_InferCNV_score_AllSamples_HD_", project, ".png"), width = 15, height = 12)
+
+FeaturePlot(seuratObj, reduction = "scvi_umap", features = "infercnv_score", order = T, min.cutoff = "q2", max.cutoff = "q98", raster = FALSE ) + 
+scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "PuOr")))
+ggsave(filename = paste0(output_figures, step, "_InferCNV_score_AllSamples_PuOr_HD_", project, ".png"), width = 15, height = 12)
+ggsave(filename = paste0(output_figures, step, "_InferCNV_score_AllSamples_PuOr_small_HD_", project, ".png"), width = 9, height = 7)
+```
+
+### Save
+```{r}
+saveRDS(seuratObj@meta.data, file = paste0(output_Robjects, "03f_post_scVI_CNV_results_SeuratMetaData.rds"))
+```
+
+```{r}
+#reload
+MetaData <- readRDS(paste0(output_Robjects, "03f_post_scVI_CNV_results_SeuratMetaData.rds"))
+```
+
+## Chr(arm) scores
+```{r}
+seuratObj <- readRDS("03c_post_scVI_R_plots/Robjects/seuratObj_NBAtlas_share_20230525.rds")
+```
+
+```{r}
+infercnv_scores_table <- read.csv("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03e_post_scVI_inferCNV_NBAtlas/Tables/03e_post_scVI_inferCNV_inferCNVpy_PerStudyMergedResults_ChrScores_NBN_NBAtlas.csv", header=T)
+```
+
+```{r}
+infercnv_scores_table$cellname <- infercnv_scores_table$X
+rownames(infercnv_scores_table) <- infercnv_scores_table$X
+
+length(infercnv_scores_table$cellname)
+cellnames_intersect <- infercnv_scores_table$cellname[ infercnv_scores_table$cellname %in% Cells(seuratObj)]
+length(cellnames_intersect)
+```
+
+```{r}
+seuratObj$chr7_score_per_cell <- NA
+seuratObj@meta.data[cellnames_intersect,]["chr7_score_per_cell"] <- infercnv_scores_table[cellnames_intersect,]["chr7_score_per_cell"]
+
+seuratObj$chr17q_score_per_cell <- NA
+seuratObj@meta.data[cellnames_intersect,]["chr17q_score_per_cell"] <- infercnv_scores_table[cellnames_intersect,]["chr17q_score_per_cell"]
+
+seuratObj$chr1p_score_per_cell <- NA
+seuratObj@meta.data[cellnames_intersect,]["chr1p_score_per_cell"] <- infercnv_scores_table[cellnames_intersect,]["chr1p_score_per_cell"]
+
+seuratObj$chr2p_score_per_cell <- NA
+seuratObj@meta.data[cellnames_intersect,]["chr2p_score_per_cell"] <- infercnv_scores_table[cellnames_intersect,]["chr2p_score_per_cell"]
+
+seuratObj$chr3p_score_per_cell <- NA
+seuratObj@meta.data[cellnames_intersect,]["chr3p_score_per_cell"] <- infercnv_scores_table[cellnames_intersect,]["chr3p_score_per_cell"]
+
+seuratObj$chr4p_score_per_cell <- NA
+seuratObj@meta.data[cellnames_intersect,]["chr4p_score_per_cell"] <- infercnv_scores_table[cellnames_intersect,]["chr4p_score_per_cell"]
+
+seuratObj$chr11q_score_per_cell <- NA
+seuratObj@meta.data[cellnames_intersect,]["chr11q_score_per_cell"] <- infercnv_scores_table[cellnames_intersect,]["chr11q_score_per_cell"]
+
+seuratObj$chr14q_score_per_cell <- NA
+seuratObj@meta.data[cellnames_intersect,]["chr14q_score_per_cell"] <- infercnv_scores_table[cellnames_intersect,]["chr14q_score_per_cell"]
+```
+
+```{r}
+FeaturePlot(seuratObj, reduction = "scvi_umap", features = "chr7_score_per_cell", order = T, min.cutoff = "q2", max.cutoff = "q98", raster = FALSE ) + 
+scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "PuOr")))
+ggsave(filename = paste0(output_figures, step, "_InferCNV_PerStudyMerged_Chr7_ScorePerCell_PuOr_HD_", project, ".png"), width = 15, height = 12)
+ggsave(filename = paste0(output_figures, step, "_InferCNV_PerStudyMerged_Chr7_ScorePerCell_PuOr_small_HD_", project, ".png"), width = 9, height = 7)
+
+FeaturePlot(seuratObj, reduction = "scvi_umap", features = "chr17q_score_per_cell", order = T, min.cutoff = "q2", max.cutoff = "q98", raster = FALSE ) + 
+scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "PuOr")))
+ggsave(filename = paste0(output_figures, step, "_InferCNV_PerStudyMerged_Chr17q_ScorePerCell_PuOr_HD_", project, ".png"), width = 15, height = 12)
+ggsave(filename = paste0(output_figures, step, "_InferCNV_PerStudyMerged_Chr17q_ScorePerCell_PuOr_small_HD_", project, ".png"), width = 9, height = 7)
+
+FeaturePlot(seuratObj, reduction = "scvi_umap", features = "chr1p_score_per_cell", order = T, min.cutoff = "q2", max.cutoff = "q98", raster = FALSE ) + 
+scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "PuOr")))
+ggsave(filename = paste0(output_figures, step, "_InferCNV_PerStudyMerged_Chr1p_ScorePerCell_PuOr_HD_", project, ".png"), width = 15, height = 12)
+ggsave(filename = paste0(output_figures, step, "_InferCNV_PerStudyMerged_Chr1p_ScorePerCell_PuOr_small_HD_", project, ".png"), width = 9, height = 7)
+
+FeaturePlot(seuratObj, reduction = "scvi_umap", features = "chr2p_score_per_cell", order = T, min.cutoff = "q2", max.cutoff = "q98", raster = FALSE ) + 
+scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "PuOr")))
+ggsave(filename = paste0(output_figures, step, "_InferCNV_PerStudyMerged_Chr2p_ScorePerCell_PuOr_HD_", project, ".png"), width = 15, height = 12)
+ggsave(filename = paste0(output_figures, step, "_InferCNV_PerStudyMerged_Chr2p_ScorePerCell_PuOr_small_HD_", project, ".png"), width = 9, height = 7)
+
+FeaturePlot(seuratObj, reduction = "scvi_umap", features = "chr3p_score_per_cell", order = T, min.cutoff = "q2", max.cutoff = "q98", raster = FALSE ) + 
+scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "PuOr")))
+ggsave(filename = paste0(output_figures, step, "_InferCNV_PerStudyMerged_Chr3p_ScorePerCell_PuOr_HD_", project, ".png"), width = 15, height = 12)
+ggsave(filename = paste0(output_figures, step, "_InferCNV_PerStudyMerged_Chr3p_ScorePerCell_PuOr_small_HD_", project, ".png"), width = 9, height = 7)
+
+FeaturePlot(seuratObj, reduction = "scvi_umap", features = "chr11q_score_per_cell", order = T, min.cutoff = "q2", max.cutoff = "q98", raster = FALSE ) + 
+scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "PuOr")))
+ggsave(filename = paste0(output_figures, step, "_InferCNV_PerStudyMerged_Chr11q_ScorePerCell_PuOr_HD_", project, ".png"), width = 15, height = 12)
+ggsave(filename = paste0(output_figures, step, "_InferCNV_PerStudyMerged_Chr11q_ScorePerCell_PuOr_small_HD_", project, ".png"), width = 9, height = 7)
+
+FeaturePlot(seuratObj, reduction = "scvi_umap", features = "chr14q_score_per_cell", order = T, min.cutoff = "q2", max.cutoff = "q98", raster = FALSE ) + 
+scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "PuOr")))
+ggsave(filename = paste0(output_figures, step, "_InferCNV_PerStudyMerged_Chr14q_ScorePerCell_PuOr_HD_", project, ".png"), width = 15, height = 12)
+ggsave(filename = paste0(output_figures, step, "_InferCNV_PerStudyMerged_Chr14q_ScorePerCell_PuOr_small_HD_", project, ".png"), width = 9, height = 7)
+```

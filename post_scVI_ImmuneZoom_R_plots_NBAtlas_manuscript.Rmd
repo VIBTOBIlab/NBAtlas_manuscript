@@ -1,0 +1,366 @@
+---
+title: "07c_post_scVI_ImmuneZoom_NBAtlas"
+author: "Noah Bonine"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(tidyverse)
+  library(scales)
+  library(RColorBrewer)
+  library(arrow)
+  library(Matrix)
+  library(UCell)
+  library(edgeR)
+})
+
+options(bitmapType='cairo')
+```
+
+```{r}
+set.seed(123)
+```
+
+```{r}
+setwd("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas")
+```
+```{r}
+output_dir <- "07c_post_scVI_ImmuneZoom_R_plots/"
+
+output_figures <- paste0(output_dir, "Figures/")
+output_tables <- paste0(output_dir, "Tables/")
+output_Robjects <- paste0(output_dir, "Robjects/")
+
+dir_SignaturePlots <- paste0(output_figures, "/SignaturePlots/")
+dir_FeaturePlots <- paste0(output_figures, "/FeaturePlots/")
+
+
+dir.create(output_dir)
+dir.create(output_figures)
+dir.create(output_tables)
+dir.create(output_Robjects)
+
+dir.create(dir_SignaturePlots)
+dir.create(dir_FeaturePlots)
+```
+
+```{r}
+reduction_to_plot <- "scvi_umap"
+step <- "07c_post_scVI_ImmuneZoom_R"
+project <- "NBAtlas"
+```
+
+# Load seuratObj
+```{r}
+#lightweight
+seuratObj <- readRDS("07b_post_scVI_ImmuneZoom_R_import_NBAtlas/Robjects/07b_post_scVI_ImmuneZoom_R_import_TumorZoom_scVI_covSample_seuratObj_NormOnly_NBAtlas.rds")
+seuratObj
+```
+
+```{r}
+Study_colors <- brewer.pal(n = length(levels(as.factor(seuratObj$Study))), name = "Dark2")
+assay_colors <- c("steelblue","goldenrod1")
+Sample_colors <- readRDS("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03c_post_scVI_R_plots/Robjects/UMAP_Sample_colors_v1.rds")
+
+seuratObj$scviUMAP_1 <- Embeddings(seuratObj, reduction = "scvi_umap")[,1]
+seuratObj$scviUMAP_2 <- Embeddings(seuratObj, reduction = "scvi_umap")[,2]
+```
+
+```{r}
+# Patient metadata
+MetaData <- readRDS("03c_post_scVI_R_plots/Robjects/03c_post_scVI_R_MetaData_PatientMetaData.rds")
+
+cellnames_intersect <- rownames(MetaData)[ rownames(MetaData) %in% Cells(seuratObj)]
+
+seuratObj$Platform <- "not assigned" #correction
+seuratObj@meta.data[cellnames_intersect,]["Platform"] <- MetaData[cellnames_intersect,]["Platform"]
+
+seuratObj$INSS_stage <- "not assigned" #initialize
+seuratObj@meta.data[cellnames_intersect,]["INSS_stage"] <- MetaData[cellnames_intersect,]["INSS_stage"]
+
+seuratObj$Timepoint <- "not assigned" #initialize
+seuratObj@meta.data[cellnames_intersect,]["Timepoint"] <- MetaData[cellnames_intersect,]["Timepoint"]
+
+seuratObj$Risk_group <- "not assigned" #initialize
+seuratObj@meta.data[cellnames_intersect,]["Risk_group"] <- MetaData[cellnames_intersect,]["Risk_group"]
+
+seuratObj$MYCN_amplification <- "not assigned" #initialize
+seuratObj@meta.data[cellnames_intersect,]["MYCN_amplification"] <- MetaData[cellnames_intersect,]["MYCN_amplification"]
+
+seuratObj$Simplified_Risk <- "not assigned" #initialize
+seuratObj@meta.data[cellnames_intersect,]["Simplified_Risk"] <- MetaData[cellnames_intersect,]["Simplified_Risk"]
+
+seuratObj@meta.data %>% group_by(Sample, MYCN_amplification) %>% summarize(n())
+```
+
+# Plots
+```{r}
+DimPlot(seuratObj, group.by = "leiden_scVI_res1", label = T, label.box = T)
+ggsave(filename = paste0(step, "_UMAP_leiden_scVI_res1_NBAtlas.png"), path = output_figures, width = 9, height = 7)
+DimPlot(seuratObj, group.by = "leiden_scVI_res2", label = T, label.box = T)
+ggsave(filename = paste0(step, "_UMAP_leiden_scVI_res2_NBAtlas.png"), path = output_figures, width = 9, height = 7)
+DimPlot(seuratObj, group.by = "leiden_scVI_res3", label = T, label.box = T)
+ggsave(filename = paste0(step, "_UMAP_leiden_scVI_res3_NBAtlas.png"), path = output_figures, width = 9, height = 7)
+
+DimPlot(seuratObj, group.by = "Study", shuffle = T) + scale_color_manual(values=Study_colors)
+ggsave(filename = paste0(step, "_UMAP_Study_NBAtlas.png"), path = output_figures, width = 9, height = 7)
+
+DimPlot(seuratObj, group.by = "Assay", shuffle = T) + scale_color_manual(values=assay_colors)
+ggsave(filename = paste0(step, "_UMAP_Assay_NBAtlas.png"), path = output_figures, width = 9, height = 7)
+
+DimPlot(seuratObj, group.by = "Sample", shuffle = T) + scale_color_manual(values=Sample_colors) & NoLegend()
+ggsave(filename = paste0(step, "_UMAP_Sample_NBAtlas.png"), path = output_figures, width = 8, height = 7)
+```
+
+```{r}
+DimPlot(seuratObj, reduction = "scvi_umap", raster = F) + scale_color_manual(values = "gray")
+ggsave(paste0(output_figures, step, "_UMAP_ImmuneZoom_gray_", project, ".png"), width = 9, height = 7, dpi = 500)
+DimPlot(seuratObj, reduction = "scvi_umap", raster = F) + scale_color_manual(values = "gray90")
+ggsave(paste0(output_figures, step, "_UMAP_ImmuneZoom_gray90_", project, ".png"), width = 9, height = 7, dpi = 500)
+```
+
+```{r}
+# split plots
+meta <- "leiden_scVI_res2"
+SeuratSplitPlotMeta(seuratObj, meta = meta, reduction_to_plot = "scvi_umap")
+ggsave(filename = paste0(step, "_UMAP_Highlight_",meta,"_NBAtlas.png"), path = output_figures, width = 25, height = 20)
+
+
+meta <- "Study"
+SeuratSplitPlotMeta(seuratObj, meta = meta, reduction_to_plot = "scvi_umap", colors = Study_colors)
+ggsave(filename = paste0(step, "_UMAP_Highlight_",meta,"_NBAtlas.png"), path = output_figures, width = 15, height = 15)
+
+meta <- "Assay"
+SeuratSplitPlotMeta(seuratObj, meta = meta, reduction_to_plot = "scvi_umap", colors = assay_colors)
+ggsave(filename = paste0(step, "_UMAP_Highlight_",meta,"_NBAtlas.png"), path = output_figures, width = 15, height = 7)
+
+meta <- "Sample"
+SeuratSplitPlotMeta(seuratObj, meta = meta, reduction_to_plot = "scvi_umap", colors = Sample_colors)
+ggsave(filename = paste0(step, "_UMAP_Highlight_",meta,"_NBAtlas.png"), path = output_figures, width = 25, height = 25)
+```
+
+```{r}
+DimPlot(seuratObj, group.by = "Author_annot_unified")
+meta <- "Author_annot_unified"
+SeuratSplitPlotMeta(seuratObj, meta = meta, reduction_to_plot = "scvi_umap", colors = Sample_colors) # highlight MDSC
+ggsave(filename = paste0(step, "_UMAP_Highlight_",meta,"_NBAtlas.png"), path = output_figures, width = 25, height = 25, dpi = 500)
+```
+
+```{r}
+# Ucell precompute
+ranks <- StoreRankings_UCell(seuratObj@assays[["RNA"]]@counts)
+
+# use precomputed
+signatures
+u.scores <- ScoreSignatures_UCell(features = signatures, precalc.ranks = ranks)
+melted <- reshape2::melt(u.scores)
+
+seuratObj$signature1 <- melted$signature1
+```
+
+# Annot 
+```{r}
+seuratObj$annot_immunezoom_v5 <- "not assigned" #v5: cDC subsets and Mono/Mac
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res2 == "31" ] <- "Plasma"
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res2 %in% c("7","6","32","10","25","1") ] <- "CD4+ T cell"
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res2 %in% c("11")] <- "Treg"
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res2 %in% c("9","28","18","22","8","0","14","13","4","16")] <- "CD8+ T cell"
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res2 %in% c("12")] <- "Circulating NK cell" 
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res3 == "32"] <- "NKT cell"
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res2 %in% c("21")] <- "Doublets"
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res2 %in% c("24","20")] <- "Resident NK cell"
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res2 %in% c("27")] <- "TOX2+/KIT+ NK cell"
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res2 %in% "23"] <- "Cycling" 
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res2 %in% "29"] <- "pDC" 
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res2 %in% c("5","30","15","19","2")] <- "Mono/macro"
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res2 %in% "17"] <- "cDC2/DC3" 
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res3 %in% "52"] <- "Migratory cDC" 
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res2 %in% c("34")] <- "cDC1"
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res2 %in% c("3","26","33")] <- "B cell"
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res2 %in% c("35")] <- "Neutrophil"
+seuratObj$annot_immunezoom_v5[seuratObj$leiden_scVI_res2 %in% "35" & seuratObj$scviUMAP_1 < 10] <- "Doublets"
+```
+
+```{r}
+DimPlot(seuratObj, group.by = "annot_immunezoom_v5")
+```
+
+```{r}
+colors_immunezoom_v5 <- hue_pal()(length(levels(as.factor(seuratObj$annot_immunezoom_v5))))
+
+names(colors_immunezoom_v5) <- c("CD4+ T cell", "CD8+ T cell", "Treg", "Cycling","Resident NK cell","Circulating NK cell","TOX2+/KIT+ NK cell","NKT cell", "Plasma", "B cell", "pDC", "Neutrophil", "cDC1", "cDC2/DC3", "Migratory cDC", "Mono/macro", "Doublets") # chose order
+colors_immunezoom_v5["NKT cell"] <- "#66b6d2"; colors_immunezoom_v5["TOX2+/KIT+ NK cell"] <- "#2596be"; colors_immunezoom_v5["Circulating NK cell"] <- "#1e7898"; colors_immunezoom_v5["Resident NK cell"] <- "#134b5f" #  #blue palette
+colors_immunezoom_v5["CD4+ T cell"] <- "#644003"; colors_immunezoom_v5["CD8+ T cell"] <- "#Faa107"; colors_immunezoom_v5["Treg"] <- "#af7105" # orange palette
+colors_immunezoom_v5["Cycling"] <- "#fdd083" # "#b3dbe9"
+colors_immunezoom_v5["cDC1"] <- "#8a1d7c"
+colors_immunezoom_v5["cDC2/DC3"] <- "#c806ae"
+colors_immunezoom_v5["Migratory cDC"] <- "#94688e"
+colors_immunezoom_v5["Neutrophil"] <- "#4b0241";  colors_immunezoom_v5["Mono/macro"] <- "#f256dd";
+colors_immunezoom_v5["Plasma"] <- "#53965b"
+colors_immunezoom_v5["B cell"] <- "#8ad097"
+colors_immunezoom_v5["pDC"] <- "#C94434"
+colors_immunezoom_v5["Doublets"] <- "gray"
+seuratObj$annot_immunezoom_v5_f <- factor(as.character(seuratObj$annot_immunezoom_v5), levels = names(colors_immunezoom_v5))
+colors_immunezoom_v5_final <- colors_immunezoom_v5
+colors_immunezoom_v5_final <- colors_immunezoom_v5_final[names(colors_immunezoom_v5_final) != "Doublets"]
+
+seuratObj$annot_immunezoom_v5_f <- factor(as.character(seuratObj$annot_immunezoom_v5), levels = names(colors_immunezoom_v5))
+seuratObj$annot_immunezoom_v5_f_rev <- factor(as.character(seuratObj$annot_immunezoom_v5), levels = rev(names(colors_immunezoom_v5)))
+```
+
+```{r}
+DimPlot(seuratObj, group.by = "annot_immunezoom_v5") + scale_color_manual(values = colors_immunezoom_v5)
+ggsave(filename = paste0(step, "_UMAP_AnnotImmune_v5_NBAtlas.png"), path = output_figures, width = 9, height = 7, dpi = 500)
+
+DimPlot(seuratObj, group.by = "annot_immunezoom_v5", label = T, repel = T) + scale_color_manual(values = colors_immunezoom_v5)
+ggsave(filename = paste0(step, "_UMAP_AnnotImmune_v5_Labeled_NBAtlas.png"), path = output_figures, width = 9, height = 7, dpi = 500)
+```
+
+## Save
+```{r}
+saveRDS(seuratObj@meta.data, "07c_post_scVI_ImmuneZoom_R_plots/Robjects/07c_post_scVI_ImmuneZoom_R_MetaData_ImmuneAnnotV5_NBAtlas.rds")
+saveRDS(colors_immunezoom_v5, "07c_post_scVI_ImmuneZoom_R_plots/Robjects/colors_ImmuneAnnotV5_NBAtlas.rds")
+```
+
+## Reload
+```{r}
+metaData <- readRDS("07c_post_scVI_ImmuneZoom_R_plots/Robjects/07c_post_scVI_ImmuneZoom_R_MetaData_ImmuneAnnotV5_NBAtlas.rds")
+seuratObj$annot_immunezoom_v5 <- metaData$annot_immunezoom_v5
+colors_immunezoom_v5 <- readRDS("07c_post_scVI_ImmuneZoom_R_plots/Robjects/colors_ImmuneAnnotV5_NBAtlas.rds")
+seuratObj$annot_immunezoom_v5_f <- factor(as.character(seuratObj$annot_immunezoom_v5), levels = names(colors_immunezoom_v5))
+seuratObj$annot_immunezoom_v5_f_rev <- factor(as.character(seuratObj$annot_immunezoom_v5), levels = rev(names(colors_immunezoom_v5)))
+colors_immunezoom_v5_final <- colors_immunezoom_v5
+colors_immunezoom_v5_final <- colors_immunezoom_v5_final[names(colors_immunezoom_v5_final) != "Doublets"]
+Idents(seuratObj) <- seuratObj$annot_immunezoom_v5
+```
+
+## Dotplot
+```{r}
+markers_annot <- c("CD3E", "CD3D", # T cells
+                   "CD4",
+                   "CD8A","CD8B", #CD8 T cells
+                   "FOXP3", "TIGIT", "CTLA4", # Tregs
+                   "MKI67", "TOP2A", "RRM2", # cycling
+                   "KLRC1", "XCL1", "XCL2", #NK
+                   "FGFBP2", "GNLY", "FCGR3A", #circ NK 
+                   "TOX2", "KIT",  #TOX2+KIT+ NK,
+                   "GZMB", "GZMH", # NK/NKT: also GNLY
+                   "IGHG2", "JCHAIN", "IGHG1", # plasma
+                   "MS4A1",  "IGHD", "IGHM", # B cell
+                   "LILRA4", "SCT", "PTCRA", # pDC 
+                   "FCGR3B", "CMTM2", "CXCR2", # Neutro 
+                   "CLEC9A", "XCR1", "CADM1", # cDC1 
+                   "CLEC10A", "CD1E", "CD1C", # cDC2/DC3 
+                   "CCR7", "LAMP3", "CCL19", # mig DC 
+                   "CD14", "MAFB", "CD68", "CSF1R" # mono/maco
+)
+
+DotPlot(seuratObj, features = markers_annot, group.by = "annot_immunezoom_v5_f", idents = names(colors_immunezoom_v5_final)) + blue_red_color_scaleg2 & coord_flip() & RotatedAxis()
+ggsave(paste0(output_figures, step, "_DotPlot_ImmuneAnnot_v5_", project, ".svg"), width = 9, height = 15)
+
+DotPlot(seuratObj, features = markers_annot, group.by = "annot_immunezoom_v5_f_rev", idents = names(colors_immunezoom_v5_final)) + blue_red_color_scaleg2 & RotatedAxis()
+ggsave(paste0(output_figures, step, "_DotPlot_ImmuneAnnot_v5_horizontal_", project, ".svg"), width = 14, height = 5)
+```
+
+## Barplots
+```{r}
+# Barplot overall
+seuratObj@meta.data %>% filter(annot_immunezoom_v5 != "Doublets") %>% ggplot() + geom_bar(aes(x = " ", fill = annot_immunezoom_v5_f)) + xlab("") + scale_fill_manual(values = colors_immunezoom_v5_final) + theme_bar 
+ggsave(paste0(output_figures, step, "_BarplotCount_ImmuneZoomAnnot_v5_final_", project, ".svg"), width = 5, height = 9)
+
+percent_data <- seuratObj@meta.data[seuratObj$annot_immunezoom_v5 != "Doublets", ] %>% group_by(annot_immunezoom_v5_f) %>%
+  summarize(count = n()) %>% mutate(percent = count/sum(count))
+ggplot(percent_data, aes(x = " ", y = percent, fill = annot_immunezoom_v5_f)) +
+  geom_col(position = "fill") + scale_y_continuous(labels = percent_format()) + scale_fill_manual(name = "Immune celltype", values = colors_immunezoom_v5_final) + theme_bar +
+  labs(y = "Percentage", x = " ")
+ggsave(paste0(output_figures, step, "_BarplotStacked_ImmuneZoomAnnot_v5_All_final_", project, ".svg"), width = 5, height = 9)
+
+# frequency table
+write.table(table(seuratObj$annot_immunezoom_v5), file = paste0(output_tables, step, "_AnnotV5_FreqTable_", project, ".csv"), row.names = T, col.names = T, sep = ",")
+
+
+# Lymphoid percentage
+table(seuratObj$annot_immunezoom_v5)
+sum(seuratObj$annot_immunezoom_v5 %in% c("CD4+ T cell", "CD8+ T cell", "NKT cell", "Treg", "pDC", "Circulating NK cell", "Resident NK cell", "TOX2+/KIT+ NK cell", "Cycling", "B cell", "Plasma"))/sum(seuratObj$annot_immunezoom_v5 != "Doublets")*100
+
+# Myeloid percentage
+sum(seuratObj$annot_immunezoom_v5 %in% c("Neutrophil","cDC1", "cDC2/DC3", "Migratory cDC","Mono/macro"))/sum(seuratObj$annot_immunezoom_v5 != "Doublets")*100
+```
+
+```{r}
+# Barplot sc vs sn overall
+seuratObj@meta.data %>% filter(annot_immunezoom_v5 != "Doublets") %>% ggplot() + geom_bar(aes(x = Assay, fill = annot_immunezoom_v5_f), position = "fill") + xlab("") + scale_fill_manual(values = colors_immunezoom_v5_final) + theme_bar_straight 
+ggsave(paste0(output_figures, step, "_BarplotStacked_ImmuneZoomAnnot_v5_ScVsSn_final_", project, ".svg"), width = 5, height = 9)
+
+
+# Barplot sc per sample
+seuratObj@meta.data %>% filter(Assay == "single-cell" & annot_immunezoom_v5 != "Doublets") %>% ggplot() + geom_bar(aes(x = Sample, fill = annot_immunezoom_v5_f)) + xlab("") + scale_fill_manual(values = colors_immunezoom_v5_final) + theme_bar + RotatedAxis()
+ggsave(paste0(output_figures, step, "_BarplotCount_Sc_ImmuneZoomAnnot_v5_final_", project, ".svg"), width = 5, height = 9)
+
+seuratObj@meta.data %>% filter(Assay == "single-cell" & annot_immunezoom_v5 != "Doublets") %>% ggplot() + geom_bar(aes(x = reorder(Sample, -table(Sample)[Sample]), fill = annot_immunezoom_v5_f)) + xlab("") + scale_fill_manual(values = colors_immunezoom_v5_final) + theme_bar + RotatedAxis()
+ggsave(paste0(output_figures, step, "_BarplotCount_Sc_Ordered_ImmuneZoomAnnot_v5_final_", project, ".svg"), width = 5, height = 9)
+
+seuratObj@meta.data %>% filter(Assay == "single-cell" & annot_immunezoom_v5 != "Doublets") %>% ggplot() + geom_bar(aes(x = Sample, fill = annot_immunezoom_v5_f), position = "fill") + xlab("") + scale_fill_manual(values = colors_immunezoom_v5_final) + theme_bar + RotatedAxis()
+ggsave(paste0(output_figures, step, "_BarplotStacked_Sc_ImmuneZoomAnnot_v5_final_", project, ".svg"), width = 5, height = 9)
+
+# Barplot sn per sample
+seuratObj@meta.data %>% filter(Assay == "single-nucleus" & annot_immunezoom_v5 != "Doublets") %>% ggplot() + geom_bar(aes(x = Sample, fill = annot_immunezoom_v5_f)) + xlab("") + scale_fill_manual(values = colors_immunezoom_v5_final) + theme_bar + RotatedAxis()
+ggsave(paste0(output_figures, step, "_BarplotCount_Sn_ImmuneZoomAnnot_v5_final_", project, ".svg"), width = 5, height = 9)
+
+seuratObj@meta.data %>% filter(Assay == "single-nucleus" & annot_immunezoom_v5 != "Doublets") %>% ggplot() + geom_bar(aes(x = reorder(Sample, -table(Sample)[Sample]), fill = annot_immunezoom_v5_f)) + xlab("") + scale_fill_manual(values = colors_immunezoom_v5_final) + theme_bar + RotatedAxis()
+ggsave(paste0(output_figures, step, "_BarplotCount_Sn_Ordered_ImmuneZoomAnnot_v5_final_", project, ".svg"), width = 5, height = 9)
+
+seuratObj@meta.data %>% filter(Assay == "single-nucleus" & annot_immunezoom_v5 != "Doublets") %>% ggplot() + geom_bar(aes(x = Sample, fill = annot_immunezoom_v5_f), position = "fill") + xlab("") + scale_fill_manual(values = colors_immunezoom_v5_final) + theme_bar + RotatedAxis()
+ggsave(paste0(output_figures, step, "_BarplotStacked_Sn_ImmuneZoomAnnot_v5_final_", project, ".svg"), width = 5, height = 9)
+```
+
+```{r}
+# Clusters per patient
+seuratObj@meta.data %>% filter(annot_immunezoom_v5_f != "Doublets") %>% ggplot() + geom_bar(aes(x = annot_immunezoom_v5_f, fill = Sample), position = "fill") + theme_bar_straight + ylab("Relative abundance") + scale_fill_manual(values = Sample_colors) & RotatedAxis() & NoLegend()
+ggsave(filename = paste0(step, "_BarPlot_Patients_Per_AnnotV5_final_", project, ".pdf"), path = output_figures, width = 9, height = 7)
+
+# Clusters per patient
+seuratObj@meta.data  %>% filter(annot_immunezoom_v5_f != "Doublets") %>% ggplot() + geom_bar(aes(x = Sample, fill = annot_immunezoom_v5_f), position = "fill") + theme_bar_straight + ylab("Relative abundance") + scale_fill_manual(values = colors_immunezoom_v5_final) & RotatedAxis()
+ggsave(filename = paste0(step, "_BarPlot_Clusters_Per_Patient_final", project, ".pdf"), path = output_figures, width = 12, height = 7)
+```
+
+```{r}
+## edgeR Stats
+abundances <- table(seuratObj$annot_immunezoom_v5[seuratObj$annot_immunezoom_v5 != "Doublets"], seuratObj$Sample[seuratObj$annot_immunezoom_v5 != "Doublets"]) 
+abundances <- unclass(abundances)
+
+metaData <- seuratObj@meta.data %>% group_by(Sample, Study, Assay) %>% summarize()
+metaData <- as_data_frame(metaData)
+rownames(metaData) <- metaData$Sample
+condition_per_sample <- metaData[colnames(abundances),][-1]
+
+y.ab <- DGEList(abundances, samples=condition_per_sample)
+y.ab
+
+design <- model.matrix(~factor(Assay), y.ab$samples)
+ 
+y.ab <- estimateDisp(y.ab, design, trend = "none")
+summary(y.ab$common.dispersion)
+
+fit.ab <- glmQLFit(y.ab, design, robust=TRUE, abundance.trend=FALSE)
+summary(fit.ab$var.prior)
+ 
+plotQLDisp(fit.ab, cex=1)
+ 
+res <- glmQLFTest(fit.ab, coef=ncol(design))
+summary(decideTests(res))
+ 
+topTags(res, n = Inf)
+```
+
+```{r}
+# Matching sample Slyper compare
+seuratObj@meta.data %>% filter(annot_immunezoom_v5 != "Doublets") %>% filter(Sample == "Slyper2020_cell_HTAPP-656-SMP-3481" | Sample == "Slyper2020_nucleus_HTAPP-656-SMP-3481_TST") %>% ggplot() + geom_bar(aes(x = Sample, fill = annot_immunezoom_v5_f)) + scale_fill_manual(values = colors_immunezoom_v5_final) + theme_bar
+ggsave(paste0(output_figures, step, "_BarplotCount_ImmuneZoomAnnot_v5_Slyper2020Matching_SNvsSC_", project, ".svg"), width = 5, height = 9)
+
+seuratObj@meta.data %>% filter(annot_immunezoom_v5 != "Doublets") %>% filter(Sample == "Slyper2020_cell_HTAPP-656-SMP-3481" | Sample == "Slyper2020_nucleus_HTAPP-656-SMP-3481_TST") %>% ggplot() + geom_bar(aes(x = Sample, fill = annot_immunezoom_v5_f), position = "fill") + scale_fill_manual(values = colors_immunezoom_v5_final) + theme_bar
+ggsave(paste0(output_figures, step, "_BarplotStacked_ImmuneZoomAnnot_v5_Slyper2020Matching_SNvsSC_", project, ".svg"), width = 5, height = 9)
+```

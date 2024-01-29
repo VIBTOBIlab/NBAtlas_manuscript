@@ -1,0 +1,569 @@
+---
+title: "09d_post_scVI_MalignantZoom_R_NMF_NBAtlas"
+author: "Noah Bonine"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(tidyverse)
+  library(scales)
+  library(RColorBrewer)
+  library(svglite)
+  library(arrow)
+  library(stringr)
+  library(NMF)
+  library(gridExtra)
+  library(ggpubr)
+  library(HGNChelper)
+  library(clusterProfiler)
+  library(GSA)
+})
+options(bitmapType='cairo')
+```
+
+```{r}
+set.seed(123)
+```
+
+```{r}
+output_dir <- "09d_post_scVI_MaligantZoom_R_NMF_NBAtlas/"
+output_figures <- paste0(output_dir, "Figures/")
+output_tables <- paste0(output_dir, "Tables/")
+output_Robjects <- paste0(output_dir, "Robjects/")
+dir_SignaturePlots <- paste0(output_figures, "/SignaturePlots/")
+dir_FeaturePlots <- paste0(output_figures, "/FeaturePlots/")
+dir.create(output_dir)
+dir.create(output_figures)
+dir.create(output_tables)
+dir.create(output_Robjects)
+dir.create(dir_SignaturePlots)
+dir.create(dir_FeaturePlots)
+```
+
+```{r}
+#params
+
+#nCores <- 1
+step <- "09d_post_scVI_MalignantZoom_NMF"
+project <- "NBAtlas"
+```
+
+
+# Load seuratObj
+```{r}
+#lightweight
+# seuratObj <- readRDS("09b_post_scVI_MalignantZoom_R_import_NBAtlas/Robjects/09b_post_scVI_MalignantZoom_R_import_MalignantZoom_scVI_covSample_2layers_seuratObj_NormOnly_NBAtlas.rds")
+# load only metadata
+metadata <- readRDS("09c_post_scVI_MalignantZoom_R_plots/Robjects/09c_post_scVI_MalignantZoom_R_SeuratMetadata_AnnotNBN_NBAtlas.rds")
+```
+
+# NMFs
+Gavish 2023 : "https://github.com/tiroshlab/3ca/tree/main/ITH_hallmarks" & "https://github.com/gabrielakinker/CCLE_heterogeneity"
+
+Collect all NMF results together:
+```{r}
+samples <- levels(as.factor(metadata$Sample))
+length(samples) #53
+
+samples <- samples[!(samples %in% names(table(metadata$Sample)[table(metadata$Sample) < 10]))] # exclude < 10 cells samples
+length(samples)
+
+Genes_nmf_w_basis <- list()
+for(i in 1:length(samples)){
+    NMFs_per_sample <- readRDS(paste0("09d_post_scVI_MalignantZoom_R_NMF_runNMF_NBAtlas/Robjects/09d_post_scVI_MalignantZoom_NMF_", samples[i], "_rank4_9_nrun10.RDS"))
+# extract base (W, gene scores) per Rank (& per MP)
+    b.4 <- basis(NMFs_per_sample$fit$`4`)
+    colnames(b.4) <- paste0(samples[i], '_rank4_9_nrun10.RDS.', "4.", 1:dim(b.4)[2])
+    b.5 <- basis(NMFs_per_sample$fit$`5`)
+    colnames(b.5) <- paste0(samples[i], '_rank4_9_nrun10.RDS.', "5.", 1:dim(b.5)[2])
+    b.6 <- basis(NMFs_per_sample$fit$`6`)
+    colnames(b.6) <- paste0(samples[i], '_rank4_9_nrun10.RDS.', "6.", 1:dim(b.6)[2])
+    b.7 <- basis(NMFs_per_sample$fit$`7`)
+    colnames(b.7) <- paste0(samples[i], '_rank4_9_nrun10.RDS.', "7.", 1:dim(b.7)[2])
+    b.8 <- basis(NMFs_per_sample$fit$`8`)
+    colnames(b.8) <- paste0(samples[i], '_rank4_9_nrun10.RDS.', "8.", 1:dim(b.8)[2])
+    b.9 <- basis(NMFs_per_sample$fit$`9`)
+    colnames(b.9) <- paste0(samples[i], '_rank4_9_nrun10.RDS.', "9.", 1:dim(b.9)[2])
+
+    nmf_w_basis_sample <- cbind(b.4, b.5, b.6, b.7, b.8, b.9) #7000 genes x 39 programs
+    Genes_nmf_w_basis[[paste0(samples[i], '_rank4_9_nrun10.RDS')]] <- nmf_w_basis_sample
+    
+}
+saveRDS(Genes_nmf_w_basis, file = paste0(output_Robjects, step, "_NMF_AllRunSamples",'_rank4_9_nrun10.RDS'))
+rm(NMFs_per_sample, b.4, b.5, b.6, b.7, b.8, b.9, nmf_w_basis_sample)
+gc()
+```
+
+```{r}
+# Reload
+Genes_nmf_w_basis <- readRDS("09d_post_scVI_MaligantZoom_R_NMF_NBAtlas/Robjects/09d_post_scVI_MalignantZoom_NMF_NMF_AllRunSamples_rank4_9_nrun10.RDS") 
+```
+
+```{r}
+# test data
+Genes_nmf_w_basis <- readRDS("C:/Users/noahb/Downloads/Genes_nmf_w_basis_example.RDS")
+```
+
+## Select NMF programs
+
+```{r}
+# robust_nmf_programs.R (Gavish 2023):
+# Function for selecting robust nonnegative matrix factorization (NMF) programs
+ 
+# - nmf_programs = a list; each element contains a matrix with NMF programs (top 50 genes) generated for a specific cell line using different NMF factorization ranks. 
+# - intra_min = minimum overlap with a program from the same cell line/sample (for selecting robust programs)
+# - intra_max = maximum overlap with a program from the same cell line/sample (for removing redundant programs)
+# - inter_filter = logical; indicates whether programs should be filtered based on their similarity to programs of other cell lines
+# - inter_min = minimum overlap with a program from another cell line/sample 
+
+# Returns a character vector with the NMF programs selected
+robust_nmf_programs <- function(nmf_programs, intra_min = 35, intra_max = 10, inter_filter=T, inter_min = 10) {
+  
+  # Select NMF programs based on the minimum overlap with other NMF programs from the same cell line
+  intra_intersect <- lapply(nmf_programs, function(z) apply(z, 2, function(x) apply(z, 2, function(y) length(intersect(x,y))))) 
+  intra_intersect_max <- lapply(intra_intersect, function(x) apply(x, 2, function(y) sort(y, decreasing = T)[2]))             
+  nmf_sel <- lapply(names(nmf_programs), function(x) nmf_programs[[x]][,intra_intersect_max[[x]]>=intra_min]) 
+  names(nmf_sel) <- names(nmf_programs)
+  
+  # Select NMF programs based on i) the maximum overlap with other NMF programs from the same cell line and ii) the minimum overlap with programs from another cell line
+  nmf_sel_unlist <- do.call(cbind, nmf_sel)
+  inter_intersect <- apply(nmf_sel_unlist , 2, function(x) apply(nmf_sel_unlist , 2, function(y) length(intersect(x,y)))) ## calculating intersection between all programs
+  
+  final_filter <- NULL 
+  for(i in names(nmf_sel)) {
+    a <- inter_intersect[grep(i, colnames(inter_intersect), invert = T),grep(i, colnames(inter_intersect))]
+    b <- sort(apply(a, 2, max), decreasing = T) # for each cell line, ranks programs based on their maximum overlap with programs of other cell lines
+    if(inter_filter==T) b <- b[b>=inter_min] # selects programs with a maximum intersection of at least 10
+    if(length(b) > 1) {
+      c <- names(b[1]) 
+      for(y in 2:length(b)) {
+        if(max(inter_intersect[c,names(b[y])]) <= intra_max) c <- c(c,names(b[y])) # selects programs iteratively from top-down. Only selects programs that have a intersection smaller than 10 with a previously selected programs
+      }
+      final_filter <- c(final_filter, c)
+    } else {
+      final_filter <- c(final_filter, names(b))
+    }
+  }
+  return(final_filter)                                                      
+}
+```
+
+```{r}
+## Parameters 
+intra_min_parameter <- 35 #for selecting robust programs (70% similarity or 35/50 overlapping genes)
+intra_max_parameter <- 10 #for removing redundant programs (20% similarity or 10/50 overlapping genes)
+inter_min_parameter <- 10 #minimum overlap with a program from another (20% similarity or 10/50 overlapping genes)
+
+nmf_programs <- lapply(Genes_nmf_w_basis, function(x) apply(x, 2, function(y) names(sort(y, decreasing = T))[1:50])) 
+
+nmf_programs <- lapply(nmf_programs,toupper) 
+
+# for each sample, select robust NMF programs (i.e. observed using different ranks in the same sample), remove redundancy due to multiple ranks, and apply a filter based on the similarity to programs from other samples. 
+nmf_filter_ccle <- robust_nmf_programs(nmf_programs, intra_min = intra_min_parameter, intra_max = intra_max_parameter, inter_filter=T, inter_min = inter_min_parameter)  
+nmf_programs <- lapply(nmf_programs, function(x) x[, is.element(colnames(x), nmf_filter_ccle),drop=F])
+nmf_programs <- do.call(cbind, nmf_programs)
+
+# calculate similarity between programs
+nmf_intersect  <- apply(nmf_programs , 2, function(x) apply(nmf_programs , 2, function(y) length(intersect(x,y)))) 
+
+# hierarchical clustering of the similarity matrix 
+nmf_intersect_hc <- hclust(as.dist(50-nmf_intersect), method="average") 
+nmf_intersect_hc <- reorder(as.dendrogram(nmf_intersect_hc), colMeans(nmf_intersect))
+nmf_intersect <- nmf_intersect[order.dendrogram(nmf_intersect_hc), order.dendrogram(nmf_intersect_hc)]
+```
+
+## Cluster selected NMF programs to generate MPs
+```{r}
+### Parameters for clustering
+Min_intersect_initial <- 10    # the minimal intersection cutoff for defining the first NMF program in a cluster
+Min_intersect_cluster <- 10    # the minimal intersection cutoff for adding a new NMF to the forming cluster 
+Min_group_size <- 5     # the minimal group size to consider for defining the first NMF program in a cluster 
+
+Sorted_intersection       <-  sort(apply(nmf_intersect , 2, function(x) (length(which(x>=Min_intersect_initial))-1)  ) , decreasing = TRUE)
+
+Cluster_list <- list()   ### Every entry contains the NMFs of a chosen cluster
+MP_list <- list()
+k  <- 1
+Curr_cluster <- c()
+
+nmf_intersect_original    <- nmf_intersect
+
+while (Sorted_intersection[1]>Min_group_size) {  
+  Curr_cluster <- c(Curr_cluster , names(Sorted_intersection[1]))
+  ### intersection between all remaining NMFs and Genes in MP 
+  Genes_MP <- nmf_programs[,names(Sorted_intersection[1])] # Genes in the forming MP are first chosen to be those in the first NMF. Genes_MP always has only 50 genes and evolves during the formation of the cluster
+  nmf_programs                <- nmf_programs[,-match(names(Sorted_intersection[1]) , colnames(nmf_programs))]  # remove selected NMF
+  Intersection_with_Genes_MP  <- sort(apply(nmf_programs, 2, function(x) length(intersect(Genes_MP,x))), decreasing = TRUE) # intersection between all other NMFs and Genes_MP  
+  NMF_history <- Genes_MP  # has genes in all NMFs in the current cluster, for redefining Genes_MP after adding a new NMF 
+  
+  ### Create gene list is composed of intersecting genes (in descending order by frequency). When the number of genes with a given frequency span bewond the 50th genes, they are sorted according to their NMF score.    
+  while ( Intersection_with_Genes_MP[1] >= Min_intersect_cluster) {  
+    Curr_cluster  <- c(Curr_cluster , names(Intersection_with_Genes_MP)[1])
+    Genes_MP_temp   <- sort(table(c(NMF_history , nmf_programs[,names(Intersection_with_Genes_MP)[1]])), decreasing = TRUE) ## Genes_MP is newly defined each time according to all NMFs in the current cluster 
+    Genes_at_border <- Genes_MP_temp[which(Genes_MP_temp == Genes_MP_temp[50])]   ### genes with overlap equal to the 50th gene
+    if (length(Genes_at_border)>1){
+      ### Sort last genes in Genes_at_border according to maximal NMF gene scores
+      ### Run across all NMF programs in Curr_cluster and extract NMF scores for each gene
+      Genes_curr_NMF_score <- c()
+      for (i in Curr_cluster) {
+        curr_study <- paste( strsplit(i , "[.]")[[1]][1 : which(strsplit(i , "[.]")[[1]] == "RDS")], collapse = ".")
+        Q <- Genes_nmf_w_basis[[curr_study]][ match(names(Genes_at_border),toupper(rownames(Genes_nmf_w_basis[[curr_study]])))[!is.na(match(names(Genes_at_border),toupper(rownames(Genes_nmf_w_basis[[curr_study]]))))]   ,i] 
+        names(Q) <- names(Genes_at_border[!is.na(match(names(Genes_at_border),toupper(rownames(Genes_nmf_w_basis[[curr_study]]))))])
+        Genes_curr_NMF_score <- c(Genes_curr_NMF_score,  Q )
+      }
+      Genes_curr_NMF_score_sort <- sort(Genes_curr_NMF_score , decreasing = TRUE)
+      Genes_curr_NMF_score_sort <- Genes_curr_NMF_score_sort[unique(names(Genes_curr_NMF_score_sort))]   
+      Genes_MP_temp <- c(names(Genes_MP_temp[which(Genes_MP_temp > Genes_MP_temp[50])]) , names(Genes_curr_NMF_score_sort))
+      
+    } else {
+      Genes_MP_temp <- names(Genes_MP_temp)[1:50] 
+    }
+    NMF_history     <- c(NMF_history , nmf_programs[,names(Intersection_with_Genes_MP)[1]]) 
+    Genes_MP        <- Genes_MP_temp[1:50]
+    nmf_programs    <- nmf_programs[,-match(names(Intersection_with_Genes_MP)[1] , colnames(nmf_programs))]  # remove selected NMF
+    Intersection_with_Genes_MP <- sort(apply(nmf_programs, 2, function(x) length(intersect(Genes_MP,x))) , decreasing = TRUE) # intersection between all other NMFs and Genes_MP  
+  }
+  Cluster_list[[paste0("Cluster_",k)]] <- Curr_cluster
+  MP_list[[paste0("MP_",k)]]           <- Genes_MP
+  k <- k+1
+  nmf_intersect <- nmf_intersect[-match(Curr_cluster,rownames(nmf_intersect) ) , -match(Curr_cluster,colnames(nmf_intersect) ) ]  # Remove current chosen cluster
+  
+  Sorted_intersection <-  sort(apply(nmf_intersect , 2, function(x) (length(which(x>=Min_intersect_initial))-1)  ) , decreasing = TRUE) # Sort intersection of remaining NMFs not included in any of the previous clusters
+  Curr_cluster <- c()
+  print(dim(nmf_intersect)[2])
+}
+```
+
+####  Sort Jaccard similarity plot according to new clusters:
+```{r}
+inds_sorted <- c()
+
+for (j in 1:length(Cluster_list)){
+  inds_sorted <- c(inds_sorted , match(Cluster_list[[j]] , colnames(nmf_intersect_original)))
+}
+
+inds_new <- c(inds_sorted, which(is.na( match(1:dim(nmf_intersect_original)[2],inds_sorted)))) ### clustered NMFs will appear first, and the latter are the NMFs that were not clustered
+nmf_intersect_meltI_NEW <- reshape2::melt(nmf_intersect_original[inds_new,inds_new]) 
+```
+```{r}
+# Plot
+custom_magma <- c(colorRampPalette(c("white", rev(magma(323, begin = 0.15))[1]))(10), rev(magma(323, begin = 0.18)))
+
+p <- ggplot(data = nmf_intersect_meltI_NEW, aes(x=Var1, y=Var2, fill=100*value/(100-value), color=100*value/(100-value))) + 
+  geom_tile() + 
+  scale_color_gradient2(limits=c(2,25), low=custom_magma[1:111],  mid =custom_magma[112:222], high = custom_magma[223:333], midpoint = 13.5, oob=squish, name="Similarity\n(Jaccard index)") +                                
+  scale_fill_gradient2(limits=c(2,25), low=custom_magma[1:111],  mid =custom_magma[112:222], high = custom_magma[223:333], midpoint = 13.5, oob=squish, name="Similarity\n(Jaccard index)")  +
+  theme( axis.ticks = element_blank(), panel.border = element_rect(fill=F), panel.background = element_blank(),  axis.line = element_blank(), axis.text = element_text(size = 11), axis.title = element_text(size = 12), legend.title = element_text(size=11), legend.text = element_text(size = 10), legend.text.align = 0.5, legend.justification = "bottom") + 
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank()) + 
+  theme(axis.title.y=element_blank(), axis.text.y=element_blank(), axis.ticks.y=element_blank()) + 
+  guides(fill = guide_colourbar(barheight = 4, barwidth = 1))
+p
+ggsave(p, filename = paste0(output_figures, step, "_Heatmap_MPs_v1_", project, ".png"), width = 20, height = 20)
+ggsave(p, filename = paste0(output_figures, step, "_Heatmap_MPs_v1_small_", project, ".png"), width = 7, height = 7, dpi = 500)
+ggsave(p, filename = paste0(output_figures, step, "_Heatmap_MPs_v1_small_HD_", project, ".png"), width = 7, height = 7, dpi = 1000)
+```
+
+```{r}
+MP_list <-  do.call(cbind, MP_list)
+
+saveRDS(MP_list, file = paste0(output_Robjects, step, "_MPList_AllRunSamples.rds"))
+openxlsx::write.xlsx(MP_list, file = paste0(output_tables, step, "_MPList_AllRunSamples.xlsx"), overwrite = T)
+
+openxlsx::write.xlsx(Cluster_list, file = paste0(output_tables, step, "_ClusterList_AllRunSamples.xlsx"), overwrite = T)
+```
+
+```{r}
+save(Cluster_list,Curr_cluster,curr_study,custom_magma,dir_FeaturePlots,dir_SignaturePlots,Genes_at_border,Genes_curr_NMF_score,Genes_curr_NMF_score_sort,Genes_MP,Genes_MP_temp,Genes_nmf_w_basis,get_top_50_names,i,inds_new,inds_sorted,inter_min_parameter,Intersection_with_Genes_MP,intra_max_parameter,intra_min_parameter,j,k,metadata,Min_group_size,Min_intersect_cluster,Min_intersect_initial,MP_list,nmf_filter_ccle,NMF_history,nmf_intersect,nmf_intersect_hc,nmf_intersect_meltI_NEW,nmf_intersect_original,nmf_programs,output_dir,output_figures,output_Robjects,output_tables,project,Q,robust_nmf_programs,samples,Sorted_intersection,step, file = paste0(output_Robjects, "09d_post_scVI_MaligantZoom_R_NMF_NBAtlas_20231103.RData"))
+```
+
+```{r}
+load("09d_post_scVI_MaligantZoom_R_NMF_NBAtlas/Robjects/09d_post_scVI_MaligantZoom_R_NMF_NBAtlas_20231103.RData")
+```
+
+# Signature plots
+```{r}
+#lightweight
+seuratObj <- readRDS("09b_post_scVI_MalignantZoom_R_import_NBAtlas/Robjects/09b_post_scVI_MalignantZoom_R_import_MalignantZoom_scVI_covSample_2layers_seuratObj_NormOnly_NBAtlas.rds")
+
+ranks <- readRDS("09c_post_scVI_MalignantZoom_R_CalcUCellRanks_NBAtlas/Robjects/09c_post_scVI_MalignantZoom_R_UCellPreCompRanks_NBAtlas.rds")
+```
+
+
+```{r}
+MPs <- as.list(MP_list)
+
+enrichIt_MPs <- enrichIt(obj = seuratObj, 
+                      gene.sets = MPs, 
+                      groups = 2000, #groups of cells to process
+                      cores = 1,
+                      method = "UCell",
+                      precalc.rank = ranks,
+                      force.gc = T) #remove gene sets with <5 genes
+saveRDS(enrichIt_MPs, file = paste0(output_Robjects, step, "_enrichIT_UCell_NMF_MPs", project, ".rds"))
+```
+
+```{r}
+enrichIt_MPs <- readRDS(paste0(output_Robjects, step, "_enrichIT_UCell_NMF_MPs", project, ".rds"))
+seuratObj <- AddMetaData(seuratObj, enrichIt_MPs)
+
+#omit technical MPs
+enrichIt_MPs$MP_3 <- NULL
+seuratObj$MP_3 <- NULL
+```
+
+```{r}
+# reload
+MetaData <- readRDS("09c_post_scVI_MalignantZoom_R_plots/Robjects/09c_post_scVI_MalignantZoom_R_SeuratMetadata_AnnotNBN_NBAtlas.rds")
+
+seuratObj$clusters <- MetaData$clusters
+```
+
+```{r}
+# mean heatmap
+heatmap <- seuratObj@meta.data[,c("clusters" ,names(enrichIt_MPs))] #
+melted <- reshape2::melt(heatmap, id.vars = c("clusters"))
+cluster_means_metaprograms <- melted %>% group_by(clusters, variable) %>% summarize(median(value))
+
+matrix_full <- reshape2::dcast(cluster_means_metaprograms, clusters ~ variable)
+matrix <- matrix_full
+rownames(matrix) <- matrix[,1] #first column
+matrix <- matrix[,-1]
+
+p <- pheatmap::pheatmap(t(matrix), 
+                        color = generate_shades(color = "black", n = 1000), #
+                        cluster_rows = T, 
+                        cluster_cols = T)
+p
+png(filename =  paste0(output_figures, step, "_enrichIT_UCell_NMF_MPs_MeanHeatmap_GroupByClusterNewAnnot", ".png"), width = 7, height = 7, units = 'in', res = 500)
+p
+dev.off()
+rm(heatmap, melted, cluster_means_metaprograms, matrix_full, matrix, p)
+```
+```{r}
+# Signature plots
+for (i in 1:length(enrichIt_MPs)){
+  FeaturePlot(seuratObj, features = names(enrichIt_MPs)[i], raster = F, max.cutoff = 'q98', min.cutoff = 0, order = T) + blue_red_spectral_color_scale11
+  ggsave(filename = paste0(step, "_UMAP_", "NMF_", names(enrichIt_MPs)[i], "_BlueYellowRed_", "_UCell_", project, ".png"), path = dir_SignaturePlots, width = 9, height = 7)
+}
+```
+
+# MP functional enrichment
+```{r}
+background_set <- readRDS(paste0(output_Robjects, "Background_Gene_Universer_NBAtlas.rds"))
+
+MP_list <- readRDS(file = "09d_post_scVI_MaligantZoom_R_NMF_NBAtlas/Robjects/09d_post_scVI_MalignantZoom_NMF_MPList_AllRunSamples.rds")
+```
+
+```{r}
+update_geneSet_NBAtlas <- function(geneset){
+  NBAtlas_genes <- readRDS("/data/gent/vo/000/gvo00027/vsc44341/R_HelperFunctions_NB/NBAtlas_genes.rds")
+  not_in_gtf <- geneset[!(geneset %in% NBAtlas_genes)]
+  print(paste0("Not in gtf: ", paste(not_in_gtf, collapse=", ")))
+  if ( length(not_in_gtf) > 0){
+    replacements <- checkGeneSymbols(not_in_gtf)[checkGeneSymbols(not_in_gtf)[2] == FALSE & !is.na(checkGeneSymbols(not_in_gtf)[3]),] #replacement in GTF
+    print(replacements)
+    if (dim(replacements)[1]>0 ){
+      geneset[geneset %in% replacements$x] <- replacements$Suggested.Symbol
+    } else{
+      print("No replacement found")
+    }
+  } else{
+    print("Nothing to replace")
+  }
+  return(geneset)
+  rm(not_in_gtf,replacements)
+}
+```
+
+## Combined gene sets
+```{r}
+# collect all genesets together: Oncogenic GS (C6), Hallmark GSs, Reactome, ChEA2022, Custom GS (includes Gavish malig MPs, ADR-MES signatures, etc.)
+
+## Oncogenic
+Oncogenic_gene_sets <- readRDS("09d_post_scVI_MaligantZoom_R_NMF_NBAtlas/Robjects/Oncogenic_gene_sets_C6_MsigDB-msigdbr.rds")
+
+updated_gene_symbol <- update_geneSet_NBAtlas(Oncogenic_gene_sets$gene_symbol)
+Oncogenic_gene_sets$gene_symbol <- updated_gene_symbol
+
+term2gene <- Oncogenic_gene_sets %>% dplyr::select(gs_name, gene_symbol)
+length(levels(as.factor(term2gene$gs_name)))
+term2gene_all <- term2gene
+
+# Hallmark
+GS.hallmark <- getGeneSets(library = "H")
+geneset_collection <- GS.hallmark #GS.hallmark@.Data
+
+set_name_vector <- character()
+gene_id_vector <- character()
+for (set_name in names(geneset_collection)) {
+  gene_ids <- unlist(geneset_collection[[set_name]]@geneIds)
+  set_name_vector <- c(set_name_vector, rep(set_name, length(gene_ids)))
+  gene_id_vector <- c(gene_id_vector, gene_ids)
+}
+geneset_collection_df <- data.frame(gs_name = set_name_vector, gene_symbol = gene_id_vector, stringsAsFactors = FALSE)
+
+updated_gene_symbol <- update_geneSet_NBAtlas(geneset_collection_df$gene_symbol)
+geneset_collection_df$gene_symbol <- updated_gene_symbol
+
+term2gene <- geneset_collection_df %>% dplyr::select(gs_name, gene_symbol)
+term2gene$gs_name <- paste0("C6_", term2gene$gs_name) # add suffix
+length(levels(as.factor(term2gene$gs_name)))
+term2gene_all <- rbind(term2gene_all, term2gene)
+
+# Reactome
+reactome_gs <- msigdbr::msigdbr(species = "Homo sapiens", category = "C2", subcategory = "REACTOME") 
+
+updated_gene_symbol <- update_geneSet_NBAtlas(reactome_gs$gene_symbol)# update genes
+reactome_gs$gene_symbol <- updated_gene_symbol
+term2gene <- reactome_gs %>% dplyr::select(gs_name, gene_symbol)
+length(levels(as.factor(term2gene$gs_name))) #50
+term2gene_all <- rbind(term2gene_all, term2gene)
+
+# Gavish2023
+Gavish2023_malignant_metaprograms <- openxlsx::read.xlsx("/data/gent/vo/000/gvo00027/vsc44341/R_HelperFunctions_NB/Gavish2023_meta_programs_2023-07-13.xlsx", sheet = "Malignant")
+
+geneset_collection_df <- gather(Gavish2023_malignant_metaprograms, key = "gs_name", value = "gene_symbol")
+
+term2gene <- geneset_collection_df %>% dplyr::select(gs_name, gene_symbol)
+term2gene$gs_name <- paste0("Gavish2023_", term2gene$gs_name) # add suffix
+length(levels(as.factor(term2gene$gs_name)))
+term2gene_all <- rbind(term2gene_all, term2gene)
+
+# ChEA2022
+ChEA2022_gmt <- GSA.read.gmt("/data/gent/vo/000/gvo00027/vsc44341/R_HelperFunctions_NB/ChEA_2022_geneSetLibrary.gmt") # from https://maayanlab.cloud/Enrichr/geneSetLibrary?mode=text&libraryName=ChEA_2022
+ChEA2022_list <- as.list(ChEA2022_gmt$genesets)
+names(ChEA2022_list) <- ChEA2022_gmt$geneset.names 
+geneset_collection <- ChEA2022_list
+gs_collection_name <- "ChEA2022"
+set_name_vector <- character()
+gene_id_vector <- character()
+for (set_name in names(geneset_collection)) {
+  gene_ids <- unlist(geneset_collection[[set_name]])
+  gene_ids <- gene_ids[nchar(gene_ids) >0]# remove empty elements
+  set_name_vector <- c(set_name_vector, rep(set_name, length(gene_ids)))
+  gene_id_vector <- c(gene_id_vector, gene_ids)
+}
+geneset_collection_df <- data.frame(gs_name = set_name_vector, gene_symbol = gene_id_vector, stringsAsFactors = FALSE)
+updated_gene_symbol <- update_geneSet_NBAtlas(geneset_collection_df$gene_symbol)
+any(is.na(updated_gene_symbol))
+geneset_collection_df$gene_symbol <- updated_gene_symbol
+term2gene <- geneset_collection_df %>% dplyr::select(gs_name, gene_symbol)
+length(levels(as.factor(term2gene$gs_name)))
+term2gene_all <- rbind(term2gene_all, term2gene)
+
+# other genesets
+Genesets_SLB <- GSA.read.gmt("/data/gent/vo/000/gvo00027/vsc44341/R_HelperFunctions_NB/Genesets_SLB.gmt")
+
+genesets_SLB_list <- as.list(Genesets_SLB$genesets)
+names(genesets_SLB_list) <- Genesets_SLB$geneset.names
+
+geneset_collection <- genesets_SLB_list
+
+set_name_vector <- character()
+gene_id_vector <- character()
+for (set_name in names(geneset_collection)) {
+  gene_ids <- unlist(geneset_collection[[set_name]])
+  gene_ids <- gene_ids[nchar(gene_ids) >0]# remove empty elements
+  set_name_vector <- c(set_name_vector, rep(set_name, length(gene_ids)))
+  gene_id_vector <- c(gene_id_vector, gene_ids)
+}
+geneset_collection_df <- data.frame(gs_name = set_name_vector, gene_symbol = gene_id_vector, stringsAsFactors = FALSE)
+
+updated_gene_symbol <- update_geneSet_NBAtlas(geneset_collection_df$gene_symbol)
+any(is.na(updated_gene_symbol))
+geneset_collection_df$gene_symbol <- updated_gene_symbol
+
+term2gene <- geneset_collection_df %>% dplyr::select(gs_name, gene_symbol)
+length(levels(as.factor(term2gene$gs_name)))
+term2gene_all <- rbind(term2gene_all, term2gene)
+
+genesets_NBN <- list(Boeva_NCC = Boeva_NCC, Boeva_noradrenergic = Boeva_noradrenergic, vanGroningen_MES = vanGroningen_MES, vanGroningen_ADR = vanGroningen_ADR, Yuan2020_adrenergic = Yuan2020_adrenergic, Yuan2020_intermed = Yuan2020_intermed, Yuan2020_mesenchymal = Yuan2020_mesenchymal, BedoyaReina_HighRisk = BedoyaReina_HighRisk, Fanlo2023_HighVsLowRisk = Fanlo2023_HighVsLowRisk, Valentijn2012_MYCN = Valentijn2012_MYCN, ChEA2022_MYCN = ChEA2022_MYCN, Jansky2021_lateSCPs = Jansky2021_lateSCPs, Jansky2021_SCPs = Jansky2021_SCPs, Jansky2021_cyclingSCPs = Jansky2021_cyclingSCPs, Jansky2021_Bridge = Jansky2021_Bridge, Jansky2021_connectingProgenitorCells = Jansky2021_connectingProgenitorCells, Jansky2021_Chromaffin = Jansky2021_Chromaffin, Jansky2021_lateChromaffin = Jansky2021_lateChromaffin, Jansky2021_Neuroblast = Jansky2021_Neuroblast, Jansky2021_lateNeuroblast = Jansky2021_lateNeuroblast, Jansky2021_cyclingNeuroblast = Jansky2021_cyclingNeuroblast, PREX_resistance = PREX_resistance, PREX_sensitivity = PREX_sensitivity, Lambertz_ALK_signature_up = Lambertz_ALK_signature_up, Lambertz_ALK_signature_down = Lambertz_ALK_signature_down, Bertoli2013_HU_upregulated = Bertoli2013_HU_upregulated, Bertoli2013_siE2F6_upregulated = Bertoli2013_siE2F6_upregulated, Takahashi2022_ReplStress_pos = Takahashi2022_ReplStress_pos, Reactome_ATR_Activation_ReplStress = Reactome_ATR_Activation_ReplStress, Reactome_DNA_Damage_Checkpoint = Reactome_DNA_Damage_Checkpoint, Reactome_G1_S_DNA_Damage_Checkpoints = Reactome_G1_S_DNA_Damage_Checkpoints, Reactome_G2_M_DNA_Damage_Checkpoint = Reactome_G2_M_DNA_Damage_Checkpoint, senescence_down_Casella2019 = senescence_down_Casella2019, senescence_up_Casella2019 = senescence_up_Casella2019, vandenBrink2017_diss_sign = vandenBrink2017_diss_sign, OFlanagan2019_diss_sign = OFlanagan2019_diss_sign, hsp_genes = hsp_genes, RPGs = RPGs, Amar2022_OLFM_related = Amar2022_OLFM_related,Amar2022_Tumor_escape = Amar2022_Tumor_escape, Amar2022_metastasis = Amar2022_metastasis, IPASS_Mayoh2022 = IPASS_Mayoh2022, Morrison2021_invasion = Morrison2021_invasion, Wolpaw2022_inflammatory_hallmark = Wolpaw2022_inflammatory_hallmark) 
+
+geneset_collection_df <- data.frame(
+  gs_name = rep(names(genesets_NBN), lengths(genesets_NBN)),
+  gene_symbol = unlist(genesets_NBN)
+)
+term2gene <- geneset_collection_df %>% dplyr::select(gs_name, gene_symbol)
+length(levels(as.factor(term2gene$gs_name)))
+term2gene_all <- rbind(term2gene_all, term2gene)
+
+length(levels(as.factor(term2gene_all$gs_name)))
+rm(term2gene)
+```
+
+```{r}
+saveRDS(term2gene_all, file = paste0(output_Robjects,step,"_CombinedGeneSets_term2gene_v20231128_", project, ".rds"))
+```
+
+```{r}
+term2gene_all <- readRDS(paste0(output_Robjects,step,"_CombinedGeneSets_term2gene_v20231128_", project, ".rds"))
+```
+
+```{r}
+# calc all
+gs_collection_name <- "CombinedGeneSets"
+
+enrichr_results <- list()
+for (i in 1:length(MP_list)){
+  genelist <- MP_list[[i]]
+  
+  ora_results <- enricher(
+    gene = genelist,
+    universe = background_set, 
+    TERM2GENE = term2gene_all,
+    pvalueCutoff = 1, # no cutoff > later filter significant ones,
+    qvalueCutoff = 1
+  )
+  n_sign_genes <- sum(ora_results@result$p.adjust <= 0.05) # number of sign genes
+  n_sign_genes <- ifelse(n_sign_genes>30, yes = 30, no = n_sign_genes) #max 30 to plot
+  if (n_sign_genes > 0){
+  dotplot(ora_results, showCategory=n_sign_genes) + scale_colour_viridis() + ggtitle(paste0("MP",i))
+  fig_height <- ifelse(n_sign_genes>15, yes = 10, no = 7)
+  ggsave(filename = paste0(output_figures, step, "_Enrichr_", gs_collection_name, "_", "MP", i, ".svg" ), width = 7, height = fig_height)} else {
+    print(paste0("No p.adj < 0.05 gene sets found for MP", i))
+  }
+  
+  ora_results_df <- ora_results@result
+  ora_results_df <- ora_results_df[ora_results_df$p.adjust <= 0.05,]
+  ora_results_df$MP <- paste0("MP",i)
+  colnames(ora_results_df)[colnames(ora_results_df)== "ID"] <- "Geneset"
+  ora_results_df$Description <- NULL
+  ora_results_df <- ora_results_df %>% mutate(neg_log10p.adjust = -log10(p.adjust))
+  enrichr_results[[i]] <- ora_results_df
+}
+names(enrichr_results) <- names(MP_list)
+saveRDS(enrichr_results, file = paste0(output_Robjects, step, "_Enrichr_", gs_collection_name, "_", "MPs_list_", project, ".rds"))
+openxlsx::write.xlsx(enrichr_results, file = paste0(output_tables, step, "_Enrichr_", gs_collection_name, "_", "MPs_list_", project, ".xlsx"), overwrite = T)
+```
+
+### Combined dotplot
+```{r}
+enrichr_results <- readRDS(paste0(output_Robjects, step, "_Enrichr_CombinedGeneSets_MPs_list_", project, ".rds"))
+```
+
+```{r}
+selected_genesets <- c("FISCHER_G2_M_CELL_CYCLE","FISCHER_G1_S_CELL_CYCLE","RPGs","vanGroningen_ADR","Jansky2021_lateNeuroblast","Gavish2023_Stress","Jansky2021_Neuroblast","Jansky2021_lateChromaffin","Gavish2023_Hypoxia",
+                       "MNA_vs_Stage1_TARGET_UP", "MNA_vs_Stage1_NRC_UP","11qLOH_vs_Stage1_TARGET_UP","11qLOH_vs_Stage1_NRC_UP",
+                       "MNA_vs_Stage1_TARGET_DN","MNA_vs_Stage1_NRC_DN","11qLOH_vs_Stage1_TARGET_DN","11qLOH_vs_Stage1_NRC_DN"
+)
+
+enrichr_df <- bind_rows(enrichr_results)
+
+sum(enrichr_df$Geneset %in% selected_genesets)
+
+enrichr_df$GeneRatio <- sapply(strsplit(enrichr_df$GeneRatio, "/"), function(x) as.numeric(x[1])/as.numeric(x[2])) # to numeric
+
+enrichr_df <- enrichr_df %>% filter(Geneset %in% selected_genesets)
+enrichr_df$Geneset <- factor(enrichr_df$Geneset, levels = rev(selected_genesets))
+enrichr_df$MP <- factor(enrichr_df$MP, levels = gtools::mixedsort(levels(as.factor(enrichr_df$MP))))
+
+ggplot(enrichr_df, aes(x = MP, y = Geneset, size = pmin(neg_log10p.adjust,50), color = GeneRatio)) +
+  geom_point() +
+  scale_size_continuous(breaks = c(1, 5, 25, 50), guide = guide_legend(title = "-log10(adjusted p)")) + #oob = scales::squish()
+  scale_color_gradientn(colors = c("steelblue1", "navyblue")) + 
+  theme_linedraw() 
+ggsave(filename = paste0(output_figures, step, "_Dotplot_Enrichr_CombinedGeneSets_MPs.svg" ), width = 7, height = 5)
+```

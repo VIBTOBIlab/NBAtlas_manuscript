@@ -1,0 +1,88 @@
+---
+title: "03f_post_scVI_CopyKAT_plot_results"
+author: "Noah Bonine"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({
+library(copykat, lib.loc = "/apps/gent/RHEL8/cascadelake-ib/software/CopyKAT/1.1.0-foss-2022a-R-4.2.1")
+library(dlm) #in R4.2.1
+library(Seurat)
+library(tidyverse)
+})
+
+options(bitmapType='cairo')
+
+set.seed(123)
+```
+
+```{r}
+project <- "NBAtlas"
+step <- "03d_post_scVI"
+
+output_dir <- "/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03f_post_scVI_CopyKAT_plot_results/"
+output_figures <- past0(output_dir, "/Figures/")
+
+dir.create(output_dir)
+dir.create(output_figures)
+```
+
+
+```{r}
+seuratObj <- readRDS("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03b_post_scVI_R_NBAtlas/Robjects/03b_post_scVI_scVI_covSample_moreEpochs20230322_seuratObj_NormOnly_NBAtlas.rds")
+
+seuratObj$copykat_results <- "not run"
+
+output_figures <- "03d_post_scVI_CopyKAT_NBAtlas/Figures"
+```
+
+# Plot per sample
+```{r}
+sampleList <- levels(as.factor(seuratObj$Sample))
+  
+for (sample in sampleList){
+  seuratObj$copykat_results <- "not run"
+  copykat_pred <- read.table(paste0("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03d_post_scVI_CopyKAT_NBAtlas/",sample,"_copykat_prediction.txt"), header = T) #or Robj
+  rownames(copykat_pred) <- copykat_pred$cell.names
+  
+  cellnames_intersect <- copykat_pred$cell.names[copykat_pred$cell.names %in% Cells(seuratObj)]
+  seuratObj@meta.data[cellnames_intersect,]["copykat_results"] <- copykat_pred[cellnames_intersect,]["copykat.pred"]
+  
+  my_colors <- hue_pal()(length(levels(factor(seuratObj$copykat_results)))) # setup colors
+  my_colors[ levels(factor(seuratObj$copykat_results)) == "not run"  ] <- "gray" # gray for NA
+  
+  names(my_colors) <- levels(factor(seuratObj$copykat_results))
+  
+  DimPlot(seuratObj, group.by = "copykat_results") + scale_color_manual(name = "copykat_results", values = my_colors)
+  ggsave(filename = paste0(output_figures, step, "_CopyKAT_Results_", sample, "_", project, ".png"), width = 9, height = 7)
+}
+```
+
+# All
+```{r}
+sampleList <- levels(as.factor(seuratObj$Sample))
+
+seuratObj$copykat_results <- "not run"
+copykat_pred <- c()
+
+for (sample in sampleList){
+  copykat_pred_sample <- read.table(paste0("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03d_post_scVI_CopyKAT_NBAtlas/",sample,"_copykat_prediction.txt"), header = T)
+  copykat_pred <- rbind(copykat_pred, copykat_pred_sample)
+}
+
+rownames(copykat_pred) <- copykat_pred$cell.names
+  
+cellnames_intersect <- copykat_pred$cell.names[copykat_pred$cell.names %in% Cells(seuratObj)]
+seuratObj@meta.data[cellnames_intersect,]["copykat_results"] <- copykat_pred[cellnames_intersect,]["copykat.pred"]
+
+my_colors <- hue_pal()(length(levels(factor(seuratObj$copykat_results)))) # setup colors
+my_colors[ levels(factor(seuratObj$copykat_results)) == "not run"  ] <- "gray" # gray for NA
+my_colors[ levels(factor(seuratObj$copykat_results)) == "not.defined"  ] <- "darkgray" # gray for NA
+
+names(my_colors) <- levels(factor(seuratObj$copykat_results))
+
+DimPlot(seuratObj, group.by = "copykat_results") + scale_color_manual(name = "copykat_results", values = my_colors)
+ggsave(filename = paste0(output_figures, step, "_CopyKAT_Results_AllSamples_", project, ".png"), width = 9, height = 7)
+```

@@ -1,0 +1,271 @@
+---
+title: "05e_scArches_SCANVI_R_plots_NBAtlas"
+author: "Noah Bonine"
+date: '2023-05-07'
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({
+  #library(scater)
+  #library(Matrix)
+  library(Seurat)
+  library(tidyverse)
+  #library(plot1cell)
+  library(scales)
+  library(RColorBrewer)
+  library(svglite)
+})
+
+options(bitmapType='cairo')
+```
+
+```{r}
+set.seed(123)
+```
+
+```{r}
+setwd("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas")
+```
+```{r}
+output_dir <- "05e_scArches_SCANVI_R_plots_NBAtlas/"
+
+output_figures <- paste0(output_dir, "Figures/")
+output_tables <- paste0(output_dir, "Tables/")
+output_Robjects <- paste0(output_dir, "Robjects/")
+
+dir_SignaturePlots <- paste0(output_figures, "/SignaturePlots/")
+dir_FeaturePlots <- paste0(output_figures, "/FeaturePlots/")
+
+dir.create(output_dir)
+dir.create(output_figures)
+dir.create(output_tables)
+dir.create(output_Robjects)
+```
+
+```{r}
+reduction_to_plot <- "scvi_umap"
+step <- "05e_scArches_SCANVI"
+project <- "NBAtlas"
+```
+
+# Load data
+```{r}
+seuratObj <- readRDS("05d_scArches_SCANVI_NBAtlas_v2_R_import/Robjects/05d_scArches_SCANVI_NBAtlasAndInhouseData_v2_full_genes_seuratObj_NormOnly_NBAtlas.rds")
+cell_ids_v2 <- gsub(pattern = "-[0-9]*$", replacement = "", x = Cells(seuratObj)) #remove number at end
+
+seuratObj <- RenameCells(seuratObj, new.names = cell_ids_v2)
+```
+
+```{r}
+seuratObj$umap_1 <- Embeddings(seuratObj, reduction = "umap")[,1]
+seuratObj$umap_2 <- Embeddings(seuratObj, reduction = "umap")[,2]
+```
+
+# Plots
+```{r}
+DimPlot(seuratObj, group.by = "Study", shuffle = T, raster = F)
+ggsave(filename = paste0(output_figures, step, "_UMAP_Study_Shuffled_", project, ".png"), width = 9, height = 7)
+
+study_names <- levels(as.factor(seuratObj$Study))
+study_names <- study_names[!(study_names %in% c("Bonine2023_cell","Bonine2023_nucleus"))]
+study_colors <- brewer.pal(n = length(study_names), name = "Dark2")
+names(study_colors) <- study_names
+study_colors["Bonine2023_cell"] <- hue_pal()(2)[1]
+study_colors["Bonine2023_nucleus"] <- hue_pal()(2)[2]
+
+DimPlot(seuratObj, group.by = "Study", shuffle = T, raster = F) + scale_color_manual(values = study_colors)
+ggsave(filename = paste0(output_figures, step, "_UMAP_Study_Shuffled_", project, ".png"), width = 9, height = 7)
+
+study_colors_alphab <- study_colors[levels(as.factor(seuratObj$Study))]
+names(study_colors_alphab) <- NULL
+SeuratSplitPlotMeta(seuratObj, meta = "Study", colors = study_colors_alphab)
+ggsave(filename = paste0(output_figures, step, "_UMAP_HighlightStudy_", project, ".png"), width = 25, height = 25)
+
+# Query vs Reference
+seuratObj$Data <- "Reference"
+seuratObj$Data[seuratObj$Study %in% c("Bonine2023_cell","Bonine2023_nucleus")] <- "Query"
+
+DimPlot(seuratObj, group.by = "Data", raster=F, shuffle = T)
+ggsave(filename = paste0(output_figures, step, "_UMAP_QueryVsReference_Shuffled_", project, ".png"), width = 9, height = 7, dpi = 500)
+
+selection <- Cells(seuratObj)[!( seuratObj$Data %in% "Reference")]   
+DimPlot(seuratObj, cells.highlight = selection, raster = F, sizes.highlight = 0.5) + scale_color_manual(values = c("gray","black"), labels = c("Reference","Query"))  
+ggsave(filename = paste0(output_figures, step, "_UMAP_QueryVsReference_HighlightQuery_", project, ".png"), width = 9, height = 7, dpi = 500)
+DimPlot(seuratObj, cells.highlight = selection, raster = F, sizes.highlight = 0.25) + scale_color_manual(values = c("gray","black"), labels = c("Reference","Query"))  
+ggsave(filename = paste0(output_figures, step, "_UMAP_QueryVsReference_HighlightQuery_SmallPoint_", project, ".png"), width = 9, height = 7, dpi = 500)
+```
+
+## Featureplots
+```{r}
+table(seuratObj$leiden, useNA = "ifany")
+DimPlot(seuratObj, group.by = "leiden", label = T)
+ggsave(filename = paste0(output_figures, step, "_UMAP_LeidenClust_", project, ".png"), height = 7, width = 9)
+DimPlot(seuratObj, group.by = "leiden", label = T, raster = F)
+ggsave(filename = paste0(output_figures, step, "_UMAP_LeidenClust_NoRaster_",project, ".png"), height = 7, width = 9)
+```
+
+```{r}
+markers <- c("PHOX2B", "NXPH1", "SYT1", #NE
+             "EGFL7", "EMCN", "PLVAP", #endo
+             "CDH19", "PLP1", "PTPRZ1", #Schwann
+             "COL1A1", "COL1A2", "COL3A1",  #fibro
+             "CD3D", "CD3E", "CD2", #T cells
+             "KLRF1", "KLRC1", "XCL2", #NK cells
+             "MS4A1", "CD79A", "VPREB3", #B cells
+             "IGHG1", "IGHG2", "IGHG3", #Plasma
+             "LYZ", "IL1B", "C1QC", #myeloid
+             "LILRA4", "SCT", "PTCRA", #pDC
+             "HBA1", "HBA2", "HBB", #RBCs
+             "CYP11B1", "CYP21A2", "FAM166B", #cortex
+             "ALB"
+             )
+
+for (marker in markers ){
+  FeaturePlot(seuratObj, features = marker, order = T, min.cutoff = "q2", max.cutoff = "q98", raster = F)
+  ggsave(paste0(dir_FeaturePlots, step, "_UMAP_", marker, "_", project, ".png"), width = 9, height = 7)
+}
+```
+
+
+# Plots
+## Color palette
+```{r}
+# define color palette to use for all
+table(seuratObj$annot_NBN_scarches)
+
+celltype_colors_all <- hue_pal()(length(levels(as.factor(seuratObj$annot_NBN_scarches))))
+names(celltype_colors_all) <- levels(as.factor(seuratObj$annot_NBN_scarches))
+
+celltype_colors_all <- celltype_colors_all[names(celltype_colors_all) != "not assigned"]# remove "not assigned" because not needed
+
+celltype_colors_all["undefined"] <- "gray"
+celltype_colors_all <- c("gray90", celltype_colors_all) # set as first
+names(celltype_colors_all)[celltype_colors_all == "gray90"] <- "reference"
+
+celltype_colors_all
+```
+
+## Manual annotation
+```{r}
+# manual annotation
+seuratObj$manual_annotation <- as.character(seuratObj$Author_Annot)
+seuratObj$manual_annotation[!(seuratObj$Study %in% c("Bonine2023_cell", "Bonine2023_nucleus"))] <- "reference"
+table(seuratObj$manual_annotation)
+seuratObj$manual_annotation[seuratObj$manual_annotation %in% c("Stromal undefined11", "Stromal undefined2", "Immune_unidentified1", "NE/fibro") ]<- "undefined"
+table(seuratObj$manual_annotation)
+```
+
+```{r}
+ggplot() + geom_point(data = seuratObj@meta.data[seuratObj$manual_annotation == "reference",], aes(x = umap_1, y = umap_2, color = manual_annotation), size = 0.5) + #gray background
+  geom_point(data = seuratObj@meta.data[seuratObj$manual_annotation != "reference",], aes(x = umap_1, y = umap_2, color = manual_annotation), size = 0.5) + scale_color_manual(values = celltype_colors_all) + theme_point + guides(colour = guide_legend(override.aes = list(size=2)))
+ggsave(filename = paste0(output_figures, step, "_UMAP_ColPerManualAnnot_HighlightPredictions_Recollored_", project, ".png"), width = 9, height = 7)
+```
+
+## Reference annotation
+```{r}
+table(seuratObj$annot_NBN_scarches, useNA = "ifany") # query data annotated as  "not assigned"
+
+seuratObj$reference_annotation <- as.character(seuratObj$annot_NBN_scarches)
+seuratObj$reference_annotation[seuratObj$reference_annotation == "not assigned"] <- "Query"
+
+celltype_colors_reference <- celltype_colors_all
+names(celltype_colors_reference)[names(celltype_colors_reference) == "reference"] <- "Query" # now plot inhouse as gray
+celltype_colors_reference <- celltype_colors_reference[names(celltype_colors_reference) != "undefined"] # no undefined
+```
+
+```{r}
+ggplot() + geom_point(data = seuratObj@meta.data, aes(x = umap_1, y = umap_2, color = reference_annotation), size = 0.5) + theme_point + guides(colour = guide_legend(override.aes = list(size=2)))
+ggsave(filename = paste0(output_figures, step, "_UMAP_ColPerReferenceAnnotation_scArches_", project, ".png"), width = 9, height = 7, dpi = 500)
+
+ggplot() + geom_point(data = seuratObj@meta.data, aes(x = umap_1, y = umap_2, color = reference_annotation), size = 0.5) + scale_color_manual(values = celltype_colors_reference) + theme_point + guides(colour = guide_legend(override.aes = list(size=2)))
+ggsave(filename = paste0(output_figures, step, "_UMAP_ColPerReferenceAnnotation_scArches_Recolored", project, ".png"), width = 9, height = 7, dpi = 500)
+```
+
+
+## Predicted celltype
+scanvi_pred
+```{r}
+seuratObj$scanvi_pred <- as.character(seuratObj$scanvi_pred)
+seuratObj$scanvi_pred[seuratObj$manual_annotation == "reference"] <- "reference" # replace NA values
+```
+
+```{r}
+seuratObj$predicted_celltype_final <- as.character(seuratObj$predicted_celltype)
+
+uncertainty_threshold <- 0.5
+seuratObj$predicted_celltype_final <- as.character(seuratObj$predicted_celltype_final)
+seuratObj$predicted_celltype_final[seuratObj$Study %in% c("Bonine2023_cell","Bonine2023_nucleus") & seuratObj$scanvi_uncertainty_value >= uncertainty_threshold] <- "undefined"
+
+table(seuratObj$predicted_celltype_final)
+unknown <- sum(seuratObj$Study %in% c("Bonine2023_cell","Bonine2023_nucleus") & seuratObj$predicted_celltype_final == "undefined")
+unknown
+unknown/tot*100
+```
+
+```{r}
+ggplot() + geom_point(data = seuratObj@meta.data[seuratObj$manual_annotation == "reference",], aes(x = umap_1, y = umap_2), color = "gray90", size = 0.5) + #gray background
+  geom_point(data = seuratObj@meta.data[seuratObj$manual_annotation != "reference" & seuratObj$leiden != "11",], aes(x = umap_1, y = umap_2, color = predicted_celltype_final), size = 0.5) + scale_color_manual(values = celltype_colors_all) + theme_point + guides(colour = guide_legend(override.aes = list(size=2)))
+ggsave(filename = paste0(output_figures, step, "_UMAP_ColPerScanviPredFinalvCleaned_HighlightScanviPred_Recolored_", project, ".png"), width = 9, height = 7)
+
+ggplot() + geom_point(data = seuratObj@meta.data[seuratObj$manual_annotation_final == "reference",], aes(x = umap_1, y = umap_2), color = "gray90", size = 0.5) + #gray background
+  geom_point(data = seuratObj@meta.data[seuratObj$manual_annotation != "reference" & seuratObj$leiden != "11",], aes(x = umap_1, y = umap_2, color = manual_annotation_final), size = 0.5) + scale_color_manual(values = celltype_colors_all) + theme_point + guides(colour = guide_legend(override.aes = list(size=2)))
+ggsave(filename = paste0(output_figures, step, "_UMAP_ColPerManualAnnotvCleaned_HighlightPredictions_Recollored_", project, ".png"), width = 9, height = 7)
+```
+
+```{r}
+# heatmap manual annot vs scanvi_pred
+meta_data_subset <- seuratObj@meta.data %>% filter(manual_annotation != "reference") %>% select(manual_annotation, predicted_celltype_final)
+abundance_table <- table(meta_data_subset) %>% prop.table(margin = 1)
+abundance_df <- as.data.frame(as.table(abundance_table))
+ggplot(abundance_df, aes(x = predicted_celltype_final, y = manual_annotation, fill = Freq)) +
+  geom_tile() + scale_fill_viridis_c() +  
+  theme_minimal() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggsave(filename = paste0(output_figures, step, "_Heatmap_RelReq_ManualAnnot_vs_ScanviPredvFinal_viridis_", project, ".svg"), width = 5, height = 5)
+
+
+# Agreement
+correct <- sum( (seuratObj$manual_annotation != "reference") & (seuratObj$manual_annotation != "undefined") & (seuratObj$manual_annotation == seuratObj$scanvi_pred) )
+correct 
+total <- sum((seuratObj$manual_annotation != "reference") & (seuratObj$manual_annotation != "undefined"))
+total 
+correct/total*100 
+```
+
+```{r}
+# Reference annotation
+ggplot() + geom_point(data = seuratObj@meta.data[seuratObj@meta.data$leiden != "11",], aes(x = umap_1, y = umap_2, color = reference_annotation), size = 0.5) + theme_point + guides(colour = guide_legend(override.aes = list(size=2)))
+ggsave(filename = paste0(output_figures, step, "_UMAP_ColPerReferenceAnnotationvCleaned_scArches_", project, ".png"), width = 9, height = 7, dpi = 500)
+
+ggplot() + geom_point(data = seuratObj@meta.data[seuratObj@meta.data$leiden != "11",], aes(x = umap_1, y = umap_2, color = reference_annotation), size = 0.5) + scale_color_manual(values = celltype_colors_reference) + theme_point + guides(colour = guide_legend(override.aes = list(size=2)))
+ggsave(filename = paste0(output_figures, step, "_UMAP_ColPerReferenceAnnotationvCleaned_scArches_Recolored", project, ".png"), width = 9, height = 7, dpi = 500)
+```
+
+```{r}
+# Highlight sample annotation cleaned version
+SeuratSplitPlotMeta(subset(seuratObj, subset = leiden != "11"), meta = "Study", colors = study_colors_alphab)
+ggsave(filename = paste0(output_figures, step, "_UMAP_HighlightStudy_vCleaned_", project, ".png"), width = 25, height = 25)
+```
+
+### Save
+```{r}
+# save
+saveRDS(seuratObj@meta.data, file = paste0(output_Robjects, step, "_SeuratMetaData_", project, ".rds"))
+saveRDS(celltype_colors_all, file = paste0(output_Robjects, "celltype_colors_all.rds"))
+saveRDS(celltype_colors_all_d, file = paste0(output_Robjects, "celltype_colors_all_d.rds"))
+```
+
+```{r}
+# reload
+MetaData <- readRDS("05e_scArches_SCANVI_R_plots_NBAtlas/Robjects/05e_scArches_SCANVI_SeuratMetaData_NBAtlas.rds")
+celltype_colors_all <- readRDS("05e_scArches_SCANVI_R_plots_NBAtlas/Robjects/celltype_colors_all.rds")
+celltype_colors_all_d <- readRDS("05e_scArches_SCANVI_R_plots_NBAtlas/Robjects/celltype_colors_all_d.rds")
+
+seuratObj$umap_1 <- MetaData$umap_1
+seuratObj$umap_2 <- MetaData$umap_2
+seuratObj$manual_annotation <- MetaData$manual_annotation
+seuratObj$manual_annotation_final <- MetaData$manual_annotation_final
+seuratObj$scanvi_pred <- MetaData$scanvi_pred
+seuratObj$predicted_celltype <- MetaData$predicted_celltype
+seuratObj$predicted_celltype_final <- MetaData$predicted_celltype_final
+```

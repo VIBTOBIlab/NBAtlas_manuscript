@@ -1,0 +1,107 @@
+---
+title: "03g_post_scVI_CellTypeDEGs_NBAtlas"
+author: "Noah Bonine"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: cosmo
+    highlight: textmate
+    df_print: paged
+    toc: true
+    toc_depth: 2
+params:
+  HPC : x
+  project : x
+  step : x
+  nCores : x
+  memPerCore : x
+  output_dir : x
+  input_seurat : x
+  input_metadata : x
+  annot_column : x
+  
+---
+
+input_metadata: metadata rds or if FALSE use metadata of input_seurat
+annot_column : annotation column defining celltypes to find DEGs for
+
+```{r libs}
+suppressPackageStartupMessages({
+  #library(scater)
+  #library(Matrix)
+  library(Seurat)
+  library(tidyverse)
+  library(scales)
+})
+```
+```{r set_seed}
+set.seed(123)
+```
+
+```{r output_dir}
+output_dir <- params$output_dir
+
+output_figures <- paste0(output_dir, "Figures/")
+output_tables <- paste0(output_dir, "Tables/")
+output_Robjects <- paste0(output_dir, "Robjects/")
+
+dir.create(output_dir)
+dir.create(output_figures)
+dir.create(output_tables)
+dir.create(output_Robjects)
+```
+
+```{r params}
+params
+
+project <- params$project
+nCores <- params$nCores
+memPerCore <- params$memPerCore
+
+step <- params$step
+
+input_metadata <- params$input_metadata
+annot_column <- params$annot_column
+```
+
+
+```{r input_seurat}
+seuratObj <- readRDS(params$input_seurat)
+```
+
+```{r input_metadata}
+MetaData <- readRDS(input_metadata)
+
+seuratObj@meta.data <- MetaData
+```
+
+```{r find_celltype_markers}
+celltypes_factor <- factor(seuratObj@meta.data[,annot_column])
+celltypes_levels <- levels(celltypes_factor)
+
+Idents(seuratObj) <- celltypes_factor
+
+FindCellTypeMarkers_results <- list()
+
+for (celltype in celltypes_levels){
+  message_parallel(paste0("Working on: ", celltype))
+  table <- FindMarkers(seuratObj, ident.1 = celltype, ident.2 = celltypes_levels[celltypes_levels != celltype], min.diff.pct = 0.3, logfc.threshold = 0.3)
+  
+  if ( dim(table)[1] != 0 ){ # only when there is output
+    table$gene <- rownames(table)
+    table$cluster <- rep(celltype, nrow(table))
+    table$score <- table$pct.1 / (table$pct.2 + 0.01) * table$avg_log2FC
+    
+    table <- table[ order(table$score, decreasing=TRUE), ]
+    FindCellTypeMarkers_results[[paste0(celltype)]] <- table
+  }
+}
+```
+
+```{r save_objects}
+# save as excel
+openxlsx::write.xlsx(FindCellTypeMarkers_results, file = paste0(output_tables, step, "_FindCellTypeMarkers_",  project,".xlsx"), overwrite = T)
+
+# save as rds for reuse
+saveRDS(FindCellTypeMarkers_results, file = paste0(output_Robjects, step, "_FindCellTypeMarkers_",  annot_column, "_", project,".rds"))
+```

@@ -1,0 +1,1904 @@
+---
+title: "01_Import_Preprocessing_NBAtlas"
+author: "Noah Bonine"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+Custom code:
+ml R-bundle-Bioconductor/3.15-foss-2022a-R-4.2.1
+
+# Setup
+```{r}
+suppressPackageStartupMessages({
+  library(scater)
+  library(Matrix)
+  library(Seurat)
+  library(tidyverse)
+  library(viridis)
+  library(patchwork)
+  library(scales)
+  library(stringr)
+  #library(ggpointdensity)
+  #library(openxlsx)
+  #library(ggraph)
+  #library(igraph)
+  #library(data.tree)
+  library(scDblFinder) #R4.2.1
+  library(HGNChelper) #specify lib loc for 4.1 lib.loc = "/apps/gent/RHEL8/cascadelake-ib/software/R/4.2.1-foss-2022a/lib/R/library"
+})
+
+options(bitmapType='cairo')
+```
+```{r dir}
+setwd("/kyukon/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas")
+getwd() #check
+
+output_dir <- "01_Import_Preprocessing_NBAtlas/"
+
+output_figures <- paste0(output_dir, "Figures/")
+output_tables <- paste0(output_dir, "Tables/")
+output_Robjects <- paste0(output_dir, "Robjects/")
+```
+
+```{r dirs_create}
+dir.create(output_dir)
+dir.create(output_figures)
+dir.create(output_tables)
+dir.create(output_Robjects)
+dir.create(paste0(output_Robjects, "/01_scDblFinder/"))
+```
+
+```{r helperfunctions}
+#https://github.com/ccruizm/GBmap/blob/main/scripts/helper_functions_v1.R
+npcs <- function(seu, var.total=0.90, reduction="pca"
+){
+  if(is.null(seu@reductions[[reduction]])){
+    cat("Reduction", reduction, "not found!")
+    return(NULL)
+  }
+  
+  tmp.var <- (seu@reductions[[reduction]]@stdev)^2
+  var.cut <- var.total*sum(tmp.var)
+  n.pcs=0
+  var.sum = 0
+  while(var.sum < var.cut){
+    n.pcs = n.pcs + 1
+    var.sum <- var.sum + tmp.var[n.pcs]
+  }
+  
+  return(n.pcs)
+}
+# Preprocess seurat objects
+seuPreProcess <- function(seu, assay='RNA', n.pcs=50, res=0.8){
+  # NormalizeData(seu) %>% FindVariableFeatures() %>% ScaleData() %>% RunPCA()
+  pca.name = paste0('pca_', assay)
+  pca.key = paste0(pca.name,'_')
+  umap.name = paste0('umap_', assay)
+  
+  seu = NormalizeData(
+    seu
+  ) %>% FindVariableFeatures(
+    assay = assay,
+    selection.method = "vst",
+    nfeatures = 2000,
+    verbose = F
+  ) %>% ScaleData(
+    assay = assay
+  ) %>% RunPCA(
+    assay = assay,
+    reduction.name = pca.name,
+    reduction.key = pca.key,
+    verbose = F,
+    npcs = n.pcs
+  )
+  
+  #find pcs to use (custom function, see helper functions script for details)
+  n.pcs.use = npcs(seu, reduction = pca.name, var.total = 0.90) #modified to 90
+  
+  # FindNeighbors %>% RunUMAP, FindClusters
+  seu <- FindNeighbors(
+    seu,
+    reduction = pca.name,
+    dims = 1:n.pcs.use,
+    force.recalc = TRUE
+  ) %>% RunUMAP(
+    reduction = pca.name,
+    dims = 1:n.pcs.use,
+    reduction.name=umap.name
+  )
+  
+  seu@reductions[[umap.name]]@misc$n.pcs.used <- n.pcs.use
+  
+  seu <- FindClusters(object = seu,resolution = res, verbose = F)
+  seu[[paste0('RNA_res.',res)]] <- as.numeric(seu@active.ident)
+  
+  return(seu)
+}
+```
+
+# Import
+## Template
+```{r}
+# <> <- readRDS()
+
+# project <- ""
+# output_figures_<> <- paste0(output_figures, "01_", project, "/")
+# dir.create(output_figures_<>)
+
+
+# <>
+# table(<>$) # samples
+```
+
+Rename cell labels (cellID_AuthorYear_sample)
+```{r}
+# head(Cells(<>))
+# tail(Cells(<>))
+
+# cell_ids_v2 
+# head(cell_ids_v2)
+# # #any(duplicated(cell_ids_v2)) #false
+# head(cell_ids_v2)
+# tail(cell_ids_v2)
+# <> <- RenameCells(<>, new.names = cell_ids_v2)
+# head(Cells(<>))
+```
+
+Filter
+```{r}
+# <>[["percent_mito"]] <- PercentageFeatureSet(<>, pattern = "^MT-")
+# 
+# sum(<>$percent_mito >= ) #25: single-cell, 10: nuc-seq
+# 
+# sum(<>$nCount_RNA <= 500) #
+# 
+# sum(<>$nFeature_RNA <= 200)
+# 
+# <> <- subset(<>, subset = percent_mito <  & nCount_RNA > 500 & nFeature_RNA > 200)
+# <>
+```
+
+Preprocessing
+```{r}
+# for (i in 1:length(<>_seurat_list)){
+#   sample <- sampleList[i]
+#   
+#   seuratObj <- seuPreProcess(<>[[i]])
+#   
+#   DimPlot(seuratObj, reduction = "umap_RNA")
+#   ggsave(paste0(output_figures_<>, "01a_", project, "_", sample, "_UMAP_prefilt_seuratClusters_NBAtlas.png"), width = 9, height = 7)
+#   
+#   # setup colors for author annot
+# my_colors <- hue_pal()(length(levels(factor(<>$Author_Annot))))
+#   # gray for NA
+# my_colors[ levels(factor(<>$Author_Annot)) == "not assigned"  ] <- "gray"
+  
+# names(my_colors) <- levels(factor(Dong2020$Author_Annot))
+  
+# DimPlot(<>, reduction = "umap_RNA", group.by = "Author_Annot") + scale_color_manual(name = "Author_Annot", values = my_colors)
+
+#   ggsave(paste0(output_figures_<>, "01a_", project, "_", sample, "_UMAP_prefilt_AuthorAnnot_NBAtlas.png"), width = 9, height = 7)
+#   
+#   <>[[i]] <- seuratObj
+#   rm(seuratObj)
+#   
+# }
+# for (i in 1: length(<>)){
+#   print(<>[[i]]@reductions$umap_RNA@misc)
+# }
+# # npcs used: 
+
+```
+
+scDblFinder:
+
+```{r}
+# for (i in 1:length(<>)){
+#   #i <- 1
+#   
+#   sample <- sampleList_<>[i]
+#   
+#   # conversion to sce
+#   sce <- as.SingleCellExperiment(<>_seurat_list[[i]], assay = 'RNA')
+#   
+#   # run scDblFinder
+#   sce <- scDblFinder(sce, verbose = T, cluster = "seurat_clusters") # samples = "Sample", #BPPARAM = bp,
+#   
+#   # results table
+#   table(sce$scDblFinder.class) 
+#   table(sce$scDblFinder.class)/length(sce$scDblFinder.class) * 100
+#   
+#   # save obj
+#   saveRDS(colData(sce), paste0(output_Robjects, "/01_scDblFinder/", "01a_<>_", sample ,"_scDblFinder_ClusterBatch_colData_NBAtlas.rds"))
+#   
+#   # back to Seurat
+#   # as.Seurat gives errors when using integrated object
+#   metaData <- colData(sce) #DFrame
+#   rm(sce)
+#   gc()
+#   
+#   <>_seurat_list[[i]][["scDblFinder.class"]] <- metaData$scDblFinder.class
+#   <>_seurat_list[[i]][["scDblFinder.score"]] <- metaData$scDblFinder.score
+#   
+#   <>_seurat_list[[i]][["scDblFinder.mostLikelyOrigin"]] <- metaData$scDblFinder.mostLikelyOrigin
+#   <>_seurat_list[[i]][["scDblFinder.originAmbiguous"]] <- metaData$scDblFinder.originAmbiguous
+#   
+#   # top 5 most likely origins per cluster
+#   <>_seurat_list[[i]]@meta.data %>% filter(scDblFinder.originAmbiguous == FALSE) %>% group_by(seurat_clusters, scDblFinder.mostLikelyOrigin) %>% summarize(freq = n()) %>% top_n(n = 5, wt = freq)
+#   
+#   # plots
+#   DimPlot(<>_seurat_list[[i]], reduction = "umap_RNA", group.by = "scDblFinder.class")
+#   ggsave(filename = paste0(output_figures_<>, "01a_<>_", sample ,"_UMAP_groupbyscDblFinder_classification_NBAtlas.png"), width = 9, height = 7)
+#   
+#   FeaturePlot(<>_seurat_list[[i]], reduction = "umap_RNA", features =  "scDblFinder.score") + scale_color_gradientn(colors = c("lightgray","gray","blue"))
+#   ggsave(filename = paste0(output_figures_<>, "01a_<>_", sample ,"_UMAP_scDblFinder_score_NBAtlas.png"), width = 9, height = 7)
+#   
+#   # remove doublets
+#   
+#   <>_seurat_list[[i]] <- subset(<>_seurat_list[[i]], subset = scDblFinder.class == "singlet")
+# }
+# 
+# <>_seurat_list
+# # 
+```
+```{r}
+# add metadata: assay, study
+# for (i in 1:length(<>_seurat_list)){
+#   <>_seurat_list[[i]]$Assay <- ""
+#   <>_seurat_list[[i]]$Study <- ""
+# }
+```
+
+```{r}
+# Author annot figs
+# for (i in 1:length(<>_seurat_list)){
+#   sample <- sampleList_Verhoeven[i]
+#   
+#   # setup colors
+#   my_colors <- hue_pal()(length(levels(factor(<>_seurat_list[[i]]$Author_Annot))))
+#   # gray for NA
+#   my_colors[ levels(factor(<>_seurat_list[[i]]$Author_Annot)) == "not assigned"  ] <- "gray"
+#   
+#   names(my_colors) <- levels(factor(<>_seurat_list[[i]]$Author_Annot))
+#   
+#   DimPlot(<>_seurat_list[[i]], group.by = "Author_Annot") + scale_color_manual(name = "Author_Annot", values = my_colors)
+#   ggsave(filename = paste0(output_figures_<>, "01b_<>_", sample ,"_UMAP_AuthorAnnot_NBAtlas.png"), width = 9, height = 7)
+# }
+```
+
+Merge obj
+```{r}
+# <> <- merge(<>_seurat_list[[1]], y = <>_seurat_list[2:length(<>_seurat_list)], project = project, merge.data = TRUE)
+```
+
+Meta data:
+Study: AuthorYear
+Platform: Assay_version
+Assay: single-cell/nucleus
+Sample: AuthorYear_sample
+Author_Annot: original author annotation
+
+```{r}
+# <>$Sample <- paste0(project, "_", <>$..)
+```
+
+```{r}
+# reprocess
+# <> <- seuPreProcess(<>)
+#<>@reductions$umap_RNA@misc # 
+```
+```{r}
+# DimPlot(<>, reduction = "umap_RNA")
+# 
+# DimPlot(<>, reduction = "umap_RNA", group.by = "Sample")
+# ggsave(filename = paste0(output_figures_<>, "01b_<>_merged_UMAP_Sample_NBAtlas.png"), width = 9, height = 7)
+
+# setup colors
+# my_colors <- hue_pal()(length(levels(factor(<>$Author_Annot))))
+# # gray for NA
+# my_colors[ levels(factor(<>$Author_Annot)) == "not assigned"  ] <- "gray"
+#   
+# DimPlot(<>, reduction = "umap_RNA", group.by = "Author_Annot", label = T, repel = T) + scale_color_manual(name = "Author_Annot", values = my_colors)
+# ggsave(filename = paste0(output_figures_<>, "01b_<>_merged_UMAP_AuthorAnnot_NBAtlas.png"), width = 9, height = 7)
+```
+
+
+Save obj
+```{r}
+#saveRDS(<> , file = paste0(output_Robjects, "01_", project,"_seuratObj_NBAtlas.rds"))
+```
+
+Reload
+```{r}
+# project <- "<>"
+# <> <- readRDS(paste0(output_Robjects, "01_", project,"_seuratObj_NBAtlas.rds"))
+```
+
+
+Get matrix and meta obj
+```{r}
+# <>_mtx <- GetAssayData(<>, assay = "RNA", slot = "counts") #raw
+```
+
+Update gene names
+```{r}
+# gene.names <- checkGeneSymbols(rownames(<>_mtx), unmapped.as.na=FALSE)
+# gene.names %>% filter(Approved == FALSE) %>% filter(x != Suggested.Symbol) # genes that need updating
+# gene.names <- gene.names$Suggested.Symbol
+# gene.names <- gsub(pattern = " ///.*", replacement = "", x = gene.names) # e.g. LORICRIN /// LOXL2 to LORICRIN (choose first)
+# rownames(<>_mtx) <- make.unique(gene.names) # c("LCOR","LCOR","LCOR") to c("LCOR","LCOR.1","LCOR.2")
+
+# <>_meta <- <>@meta.data
+```
+
+Cleanup
+```{r}
+# rm(seuratObj, seurat_list, seurat_final, gene.names, sample_ids, cell_ids_v2, project) #don't remove _mtx and _meta
+```
+
+## Dong 2020
+
+```{r}
+Dong2020 <- readRDS("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/Dong2020_metaAnalysis/6e_Clean1_Annotation_Dong2020/Robjects/6e_Clean1_UMAP_Annotated_Dong2020.rds") #10.8 GB
+project <- "Dong2020"
+
+output_figures_Dong2020 <- paste0(output_figures, "01_", project, "/")
+dir.create(output_figures_Dong2020)
+
+Dong2020 #31095 x 166347 cells
+```
+
+```{r}
+sum(Dong2020$percent_mito > 25)
+sum(Dong2020$nCount_RNA < 500)
+sum(Dong2020$nFeature_RNA < 200)
+# Already filtered
+```
+
+```{r}
+table(Dong2020$Sample)
+```
+Add author annotation
+```{r}
+Dong2020_author_annot <- readRDS("/kyukon/data/gent/vo/000/gvo00027/vsc44341/Dong2020_GRCh38-99/Dong2020_author_annot.rds") # metadata from https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE137804 GSE137804_tumor_dataset_annotation.csv.gz (column cellname_NB added)
+rownames(Dong2020_author_annot) <- Dong2020_author_annot$cellname_NB
+
+length(Cells(Dong2020)) #166347
+length(which(Cells(Dong2020) %in% Dong2020_author_annot$cellname_NB)) #142430
+
+cells_intersect <- Cells(Dong2020)[which(Cells(Dong2020) %in% Dong2020_author_annot$cellname_NB)]
+```
+```{r}
+# add author annotation
+Dong2020[["Author_Annot"]] <- "not assigned"
+
+Dong2020@meta.data[cells_intersect,]["Author_Annot"] <- Dong2020_author_annot[cells_intersect,]["celltype"]
+#check
+table(Dong2020$Author_Annot)
+```
+```{r}
+# Plot
+# setup colors
+my_colors <- hue_pal()(length(levels(factor(Dong2020$Author_Annot))))
+# gray for NA
+my_colors[ levels(factor(Dong2020$Author_Annot)) == "not assigned"  ] <- "gray"
+  
+names(my_colors) <- levels(factor(Dong2020$Author_Annot))
+#my_scale <- scale_color_manual(name = "Dong2020_Annotation", values = my_colors)  
+  
+DimPlot(Dong2020, group.by = "Author_Annot") + scale_color_manual(name = "Author_Annot", values = my_colors)
+ggsave(filename = paste0(output_figures_Dong2020, "01_Dong2020_UMAP_AuthorAnnot_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(Dong2020, group.by = "Author_Annot", label = T, repel = T) + scale_color_manual(name = "Author_Annot", values = my_colors)
+ggsave(filename = paste0(output_figures_Dong2020, "01_Dong2020_UMAP_AuthorAnnot_Labeled_NBAtlas.png"), width = 9, height = 7)
+```
+
+Study, Sample & Author_Annot column
+```{r}
+Dong2020$Study <- "Dong2020"
+# Sample OK
+# Author_Annot OK
+
+# Platform: 10X v2 & v3
+Dong2020$Platform <- "not assigned"
+Dong2020$Platform[ Dong2020$Sample %in% c("Dong2020_T27","Dong2020_T34","Dong2020_T40","Dong2020_T44","Dong2020_T69","Dong2020_T71","Dong2020_T75","Dong2020_T92")] <- "10X_v2"
+Dong2020$Platform[ Dong2020$Sample %in% c("Dong2020_T162","Dong2020_T174","Dong2020_T188","Dong2020_T200","Dong2020_T214","Dong2020_T230") ] <- "10X_v3"
+table(Dong2020$Platform)
+
+Dong2020$Assay <- "single-cell"
+
+head(Dong2020@meta.data)
+```
+
+```{r}
+saveRDS(Dong2020, file = paste0(output_Robjects, "01_Dong2020_seuratObj_NBAtlas.rds"))
+```
+
+### Reload
+```{r}
+project <- "Dong2020"
+Dong2020 <- readRDS(paste0(output_Robjects, "01_Dong2020_seuratObj_NBAtlas.rds"))
+```
+
+Get matrix and meta obj
+```{r}
+# raw matrix
+Dong2020_mtx <- GetAssayData(Dong2020, slot = "counts") # 3.9 GB
+```
+
+Update genes
+```{r}
+gene.names <- checkGeneSymbols(rownames(Dong2020_mtx), unmapped.as.na=FALSE)
+gene.names %>% filter(Approved == FALSE) %>% filter(x != Suggested.Symbol) # genes that need updating
+gene.names <- gene.names$Suggested.Symbol
+gene.names <- gsub(pattern = " ///.*", replacement = "", x = gene.names) # e.g. LORICRIN /// LOXL2 to LORICRIN (choose first)
+rownames(Dong2020_mtx) <- make.unique(gene.names) # c("LCOR","LCOR","LCOR") to c("LCOR","LCOR.1","LCOR.2")
+ 
+Dong2020_meta <- Dong2020@meta.data
+```
+
+```{r Dong2020_cleanup}
+rm(Dong2020, gene.names, cells_intersect)
+gc()
+```
+
+## Jansky 2021
+
+```{r Jansky_import}
+Jansky2021 <- readRDS("/scratch/gent/vo/000/gvo00027/data/Single_Cell_Neuroblastoma/NB_human/Author_processed/Jansky2021/Jansky2021_data/Neuroblastoma_sc_Jansky.rds") # sent by authors but identical to https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE163431
+
+project <- "Jansky2021"
+output_figures_Jansky2021 <- paste0(output_figures, "01_", project, "/")
+dir.create(output_figures_Jansky2021)
+
+Jansky2021 # 2.6 GB
+# 26344 genes x 64769 cells
+
+#check
+#DimPlot(Jansky2021, reduction = "umap")
+```
+
+Rename cell labels (cellID_AuthorYear_sample)
+```{r Jansky_rename_cell_labels}
+head(Cells(Jansky2021))
+tail(Cells(Jansky2021))
+
+sample_ids <- Jansky2021$patientID
+
+cell_ids_v2 <- gsub(pattern = "[0-9]*$", replacement = "", x = Cells(Jansky2021)) #remove number at end
+head(cell_ids_v2)
+cell_ids_v2 <- paste0(cell_ids_v2, project, "_", sample_ids ) # add project_sample
+
+head(cell_ids_v2)
+tail(cell_ids_v2)
+
+Jansky2021 <- RenameCells(Jansky2021, new.names = cell_ids_v2)
+
+head(Jansky2021@meta.data)
+tail(Jansky2021@meta.data)
+```
+
+Filter
+```{r}
+Jansky2021[["percent_mito"]] <- PercentageFeatureSet(Jansky2021, pattern = "^MT-") #percent.mt
+#check
+#all(Jansky2021$percent.mt == Jansky2021$percent_mito) #true
+
+sum(Jansky2021$percent_mito > 10) # nuc-seq
+
+sum(Jansky2021$nCount_RNA < 500) #10060
+
+sum(Jansky2021$nFeature_RNA < 200)
+
+table(Jansky2021$patientID)
+Jansky2021 <- subset(Jansky2021, subset = percent_mito < 10 & nCount_RNA > 500 & nFeature_RNA > 200)
+Jansky2021
+# 26344 genes x 54596 cells
+```
+
+Doublets already removed (DoubletFinder)
+
+Study, Sample & Author_Annot column:
+Study: AuthorYear
+Platform: Assay_version
+Assay: single-cell/nucleus
+Sample: AuthorYear_sample
+Author_Annot: original author annotation
+
+
+```{r}
+Jansky2021$Study <- "Jansky2021"
+Jansky2021$Sample <- paste0("Jansky2021_", Jansky2021$patientID)
+Jansky2021$Assay <- "single-nucleus"
+Jansky2021$Platform <- "10X_v2"
+
+# annotation
+all(Jansky2021$celltype == Jansky2021$anno_new) # same column
+DimPlot(Jansky2021, group.by = "celltype")
+ggsave(filename = paste0(output_figures_Jansky2021, "01_Jansky2021_HarmonyUMAP_AuthorAnnot_NBAtlas.png"), width = 9, height = 7)
+
+Jansky2021$Author_Annot <- unfactor(Jansky2021$celltype)
+
+head(Jansky2021@meta.data)
+```
+
+
+Save obj
+```{r}
+saveRDS(Jansky2021 , file = paste0(output_Robjects, "01_Jansky2021_seuratObj_NBAtlas.rds"))
+```
+
+### Reload
+```{r}
+project <- "Jansky2021"
+Jansky2021 <- readRDS(paste0(output_Robjects, "01_Jansky2021_seuratObj_NBAtlas.rds"))
+```
+
+Get matrix and meta obj
+```{r}
+Jansky2021_mtx <- GetAssayData(Jansky2021, slot = "counts") #raw
+```
+
+Update gene names
+```{r}
+gene.names <- checkGeneSymbols(rownames(Jansky2021_mtx), unmapped.as.na=FALSE)
+gene.names %>% filter(Approved == FALSE) %>% filter(x != Suggested.Symbol) # genes that need updating
+# a lot of corrections
+gene.names <- gene.names$Suggested.Symbol
+gene.names <- gsub(pattern = " ///.*", replacement = "", x = gene.names) # e.g. LORICRIN /// LOXL2 to LORICRIN (choose first)
+rownames(Jansky2021_mtx) <- make.unique(gene.names) # c("LCOR","LCOR","LCOR") to c("LCOR","LCOR.1","LCOR.2")
+
+Jansky2021_meta <- Jansky2021@meta.data
+```
+
+Cleanup
+```{r}
+rm(Jansky2021, gene.names, sample_ids, cell_ids_v2, project) #don't remove _mtx and _meta
+gc()
+```
+
+## Kildisiute 2021 - 10X
+
+```{r}
+Kildisiute2021_10X <- readRDS("/scratch/gent/vo/000/gvo00027/data/Single_Cell_Neuroblastoma/NB_human/Author_processed/Kildisiute2021/nb_GOSH_updatedErratum.rds")
+# from https://www.neuroblastomacellatlas.org/ erratum paper: PD42187 removed
+project <- "Kildisiute2021_10X"
+output_figures_Kildisiute2021_10X <- paste0(output_figures, "01_", project, "/")
+dir.create(output_figures_Kildisiute2021_10X)
+
+Kildisiute2021_10X # 33428 genes x 2721 cells 
+table(Kildisiute2021_10X$SampleName)
+```
+
+Rename cell labels (cellID_AuthorYear_sample)
+```{r}
+head(Cells(Kildisiute2021_10X))
+tail(Cells(Kildisiute2021_10X))
+
+cell_ids_v2 <- Cells(Kildisiute2021_10X)
+cell_ids_v2 <- paste0(cell_ids_v2, "_", project, "_", Kildisiute2021_10X$SampleName)
+
+#any(duplicated(cell_ids_v2)) #false
+head(cell_ids_v2)
+tail(cell_ids_v2)
+
+Kildisiute2021_10X <- RenameCells(Kildisiute2021_10X, new.names = cell_ids_v2)
+head(Cells(Kildisiute2021_10X))
+```
+
+Filter
+```{r}
+Kildisiute2021_10X[["percent_mito"]] <- Kildisiute2021_10X$mtGenes
+
+sum(Kildisiute2021_10X$percent_mito > 25) #25: single-cell, 10: nuc-seq
+sum(Kildisiute2021_10X$nCount_RNA < 500) #
+sum(Kildisiute2021_10X$nFeature_RNA < 200)
+
+# No further filtering
+```
+
+Preprocess (if required)
+```{r}
+table(Kildisiute2021_10X$SampleName) # low number of cells -> very low fraction of doublets expected
+
+# seurat_list <- lapply(seurat_list, seuPreProcess)
+# seurat_list
+```
+
+
+Doublets: no doublet filtering performed by authors
+
+```{r}
+DimPlot(Kildisiute2021_10X)
+
+# add seurat clusters to meta data
+Kildisiute2021_10X$seurat_clusters <- Idents(Kildisiute2021_10X)
+
+# multi-core seed
+#bp <- MulticoreParam(nCores, RNGseed=123)
+
+# conversion to sce
+sce <- as.SingleCellExperiment(Kildisiute2021_10X, assay = 'RNA')
+
+# run scDblFinder
+sce <- scDblFinder(sce, verbose = T, cluster = "seurat_clusters") #BPPARAM = bp,
+# scDblFinder might not work well with very low numbers of cells
+
+
+# results table
+table(sce$scDblFinder.class) # singlet 2619, doublet 102
+table(sce$scDblFinder.class)/length(sce$scDblFinder.class) * 100 # singlet 96.251378 doublet 3.748622
+
+# save obj
+saveRDS(colData(sce), paste0(output_Robjects, "/01_scDblFinder/", "01_Kildisiute2021_10X_scDblFinder_ClusterBatch_colData_NBAtlas.rds"))
+
+# back to Seurat
+# as.Seurat gives errors when using integrated object
+metaData <- colData(sce) #DFrame
+rm(sce)
+gc()
+
+Kildisiute2021_10X[["scDblFinder.class"]] <- metaData$scDblFinder.class
+Kildisiute2021_10X[["scDblFinder.score"]] <- metaData$scDblFinder.score
+
+Kildisiute2021_10X[["scDblFinder.mostLikelyOrigin"]] <- metaData$scDblFinder.mostLikelyOrigin
+Kildisiute2021_10X[["scDblFinder.originAmbiguous"]] <- metaData$scDblFinder.originAmbiguous
+
+# top 5 most likely origins per cluster
+Kildisiute2021_10X@meta.data %>% filter(scDblFinder.originAmbiguous == FALSE) %>% group_by(seurat_clusters, scDblFinder.mostLikelyOrigin) %>% summarize(freq = n()) %>% top_n(n = 5, wt = freq)
+```
+```{r}
+# plots
+DimPlot(Kildisiute2021_10X, group.by = "scDblFinder.class")
+ggsave(filename = paste0(output_figures_Kildisiute2021_10X, "01_Kildisiute2021_10X_UMAP_groupbyscDblFinder_classification_NBAtlas.png"), width = 9, height = 7)
+
+FeaturePlot(Kildisiute2021_10X, features =  "scDblFinder.score") + scale_color_gradientn(colors = c("lightgray","gray","blue"))
+ggsave(filename = paste0(output_figures_Kildisiute2021_10X, "01_Kildisiute2021_10X_UMAP_scDblFinder_score_NBAtlas.png"), width = 9, height = 7)
+```
+
+Filter out doublets
+```{r}
+Kildisiute2021_10X # 33428 genes x 2721 cells
+
+Kildisiute2021_10X <- subset(Kildisiute2021_10X, subset = scDblFinder.class == "singlet")
+Kildisiute2021_10X # 33428 genes x 2619 cells
+```
+
+
+Study, Sample & Author_Annot column:
+Study: AuthorYear
+Platform: Assay_version
+Assay: single-cell/nucleus
+Sample: AuthorYear_sample
+Author_Annot: original author annotation
+
+```{r}
+Kildisiute2021_10X$Study <- "Kildisiute2021_10X"
+Kildisiute2021_10X$Platform <- "10X_v2_or_v3" # not specified
+Kildisiute2021_10X$Assay <- "single-cell"
+# sample
+Kildisiute2021_10X$Sample <- paste0(project, "_", Kildisiute2021_10X$SampleName)
+
+# annotation
+DimPlot(Kildisiute2021_10X, group.by = "Annotation")
+ggsave(filename = paste0(output_figures_Kildisiute2021_10X, "01_Kildisiute2021_10X_UMAP_AuthorAnnot_NBAtlas.png"), width = 9, height = 7)
+
+Kildisiute2021_10X$Author_Annot <- Kildisiute2021_10X$Annotation
+
+DimPlot(Kildisiute2021_10X)
+DimPlot(Kildisiute2021_10X, group.by = "Annotation")
+DimPlot(Kildisiute2021_10X, group.by = "SampleName")
+
+head(Kildisiute2021_10X@meta.data)
+```
+
+Save obj
+```{r}
+saveRDS(Kildisiute2021_10X, file = paste0(output_Robjects, "01_Kildisiute2021_10X_seuratObj_NBAtlas.rds"))
+```
+
+### Reload
+```{r}
+project <- "Kildisiute2021_10X"
+Kildisiute2021_10X <- readRDS(paste0(output_Robjects, "01_Kildisiute2021_10X_seuratObj_NBAtlas.rds"))
+```
+
+Get matrix and meta obj
+```{r}
+Kildisiute2021_10X_mtx <- GetAssayData(Kildisiute2021_10X, slot = "counts") #raw
+```
+
+Update gene names
+```{r}
+gene.names <- checkGeneSymbols(rownames(Kildisiute2021_10X_mtx), unmapped.as.na=FALSE)
+gene.names %>% filter(Approved == FALSE) %>% filter(x != Suggested.Symbol) # genes that need updating
+# 994
+gene.names <- gene.names$Suggested.Symbol
+gene.names <- gsub(pattern = " ///.*", replacement = "", x = gene.names) # e.g. LORICRIN /// LOXL2 to LORICRIN (choose first)
+rownames(Kildisiute2021_10X_mtx) <- make.unique(gene.names) # c("LCOR","LCOR","LCOR") to c("LCOR","LCOR.1","LCOR.2")
+
+Kildisiute2021_10X_meta <- Kildisiute2021_10X@meta.data
+```
+
+Cleanup
+```{r}
+rm(Kildisiute2021_10X, gene.names, sample_ids, cell_ids_v2, project) #don't remove _mtx and _meta
+gc()
+```
+
+## Slyper2020 single-cell
+Data from: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE140819, raw bc matrices
+Exclude PDX sample
+
+```{r}
+project <- "Slyper2020_cell"
+
+output_figures_Slyper2020_cell <- paste0(output_figures, "01_", project, "/")
+dir.create(output_figures_Slyper2020_cell)
+
+Slyper2020_cell_seurat_list <- list()
+
+sampleList <- c("Slyper2020_cell_HTAPP_312_SMP_901", "Slyper2020_cell_HTAPP_312_SMP_902","Slyper2020_cell_HTAPP-656-SMP-3481")
+fileListh5 <- c("GSM4186961_HTAPP-312-SMP-901_fresh-T1_channel1_raw_gene_bc_matrices_h5.h5", "GSM4186962_HTAPP-312-SMP-902_fresh-C4-T2_channel1_raw_gene_bc_matrices_h5.h5", "GSM4186963_HTAPP-656-SMP-3481_fresh-T1_channel1_raw_gene_bc_matrices_h5.h5")
+fileListcsv <- c("GSM4186961_metadata_HTAPP-312-SMP-901_fresh-T1_channel1.csv", "GSM4186962_metadata_HTAPP-312-SMP-902_fresh-C4-T2_channel1.csv", "GSM4186963_metadata_HTAPP-656-SMP-3481_fresh-T1_channel1.csv")
+
+for (i in 1:length(sampleList)){
+  #i <- 1
+  
+  sample <- sampleList[i]
+  dgCMtx <- Read10X_h5(paste0("/scratch/gent/vo/000/gvo00027/data/Single_Cell_Neuroblastoma/NB_human/Author_processed/Slyper2020/", fileListh5[i]))
+  
+  colnames(dgCMtx) <- gsub(pattern = "[0-9]*$", replacement = sample, x = colnames(dgCMtx)) # AAACCTGAGAAACCAT-1 to AAACCTGAGAAACCAT-Slyper2020_cell_HTAPP_312_SMP_901
+  
+  seuratObj <- CreateSeuratObject(dgCMtx, min.features = 200, project = sample)
+  
+  metaData <- read.csv(paste0("/scratch/gent/vo/000/gvo00027/data/Single_Cell_Neuroblastoma/NB_human/Author_processed/Slyper2020/Slyper2020_metadata/", fileListcsv[i]), header = T) # annotate	nReads	nUMI	nGene	percent_mito	emptydrop	doublet
+  
+  # HTAPP-312-SMP-901_fresh-T1_channel1-AAACCTGAGACGCAAC > Slyper2020_cell_AAACCTGAGACGCAAC-HTAPP-312-SMP-901_fresh-T1
+  cellnames <- str_extract(string = metaData$X, pattern = "-[A-Z]+$") #HTAPP-312-SMP-901_fresh-T1_channel1-AAACCTGAGACGCAAC > -AAACCTGAGACGCAAC
+  cellnames <- gsub(pattern = "-", replacement = "", x = cellnames) # remove -
+  cellnames <- paste0(cellnames, "-", sample) #
+  metaData$cellnames_NBN <- cellnames 
+  rownames(metaData) <- cellnames
+  
+  # add metadata
+  seuratObj$Sample <- sample
+  
+  seuratObj[["percent_mito"]] <- PercentageFeatureSet(seuratObj, pattern = "^MT-")
+  
+  # author annotation
+  seuratObj$Author_Annot <- "not assigned"
+  cells_intersect <- Cells(seuratObj)[which(Cells(seuratObj) %in% metaData$cellnames_NBN)]
+  seuratObj@meta.data[cells_intersect,]["Author_Annot"] <- metaData[cells_intersect,]["annotate"]
+  
+  # extra filtering
+  seuratObj <- subset(seuratObj, subset = nFeature_RNA > 200 & nCount_RNA > 500 & percent_mito < 25)
+  
+  
+  Slyper2020_cell_seurat_list[[i]] <- seuratObj
+  
+  names(Slyper2020_cell_seurat_list)[i] <- sample
+  
+  rm(dgCMtx, seuratObj)
+  
+}
+
+Slyper2020_cell_seurat_list
+#pre-filt: 33694 genes x 6642, 1247, 4543 cells 
+#post-filt: 33694 genes x 5404, 1035, 4008 cells
+```
+
+### Doublets
+Pre-processing
+```{r}
+for (i in 1:length(Slyper2020_cell_seurat_list)){
+  #i <- 1
+  
+  sample <- sampleList[i]
+  
+  seuratObj <- seuPreProcess(Slyper2020_cell_seurat_list[[i]])
+  
+  DimPlot(seuratObj, reduction = "umap_RNA")
+  ggsave(paste0(output_figures_Slyper2020_cell, "01a_", project, "_", sample, "UMAP_prefilt_seuratClusters_NBAtlas.png"), width = 9, height = 7)
+  
+  DimPlot(seuratObj, reduction = "umap_RNA", group.by = "Author_Annot")
+  ggsave(paste0(output_figures_Slyper2020_cell, "01a_", project, "_", sample, "UMAP_prefilt_AuthorAnnot_NBAtlas.png"), width = 9, height = 7)
+  
+  Slyper2020_cell_seurat_list[[i]] <- seuratObj
+  rm(seuratObj)
+  
+}
+# Slyper2020_cell_seurat_list[[1]]@reductions$umap_RNA@misc
+# npcs used: 34, 38, 31
+
+```
+
+scDblFinder:
+
+```{r}
+for (i in 1:length(Slyper2020_cell_seurat_list)){
+  #i <- 1
+  
+  sample <- sampleList[i]
+  
+  # conversion to sce
+  sce <- as.SingleCellExperiment(Slyper2020_cell_seurat_list[[i]], assay = 'RNA')
+  
+  # run scDblFinder
+  sce <- scDblFinder(sce, verbose = T, cluster = "seurat_clusters") #BPPARAM = bp,
+  
+  # results table
+  table(sce$scDblFinder.class) # singlet 2619, doublet 102
+  table(sce$scDblFinder.class)/length(sce$scDblFinder.class) * 100 # singlet 96.251378 doublet 3.748622
+  
+  # save obj
+  saveRDS(colData(sce), paste0(output_Robjects, "/01_scDblFinder/", "01a_Slyper2020_cell_", sample ,"_scDblFinder_ClusterBatch_colData_NBAtlas.rds"))
+  
+  # back to Seurat
+  # as.Seurat gives errors when using integrated object
+  metaData <- colData(sce) #DFrame
+  rm(sce)
+  gc()
+  
+  Slyper2020_cell_seurat_list[[i]][["scDblFinder.class"]] <- metaData$scDblFinder.class
+  Slyper2020_cell_seurat_list[[i]][["scDblFinder.score"]] <- metaData$scDblFinder.score
+  
+  Slyper2020_cell_seurat_list[[i]][["scDblFinder.mostLikelyOrigin"]] <- metaData$scDblFinder.mostLikelyOrigin
+  Slyper2020_cell_seurat_list[[i]][["scDblFinder.originAmbiguous"]] <- metaData$scDblFinder.originAmbiguous
+  
+  # top 5 most likely origins per cluster
+  Slyper2020_cell_seurat_list[[i]]@meta.data %>% filter(scDblFinder.originAmbiguous == FALSE) %>% group_by(seurat_clusters, scDblFinder.mostLikelyOrigin) %>% summarize(freq = n()) %>% top_n(n = 5, wt = freq)
+  
+  # plots
+  DimPlot(Slyper2020_cell_seurat_list[[i]], reduction = "umap_RNA", group.by = "scDblFinder.class")
+  ggsave(filename = paste0(output_figures_Slyper2020_cell, "01a_Slyper2020_cell_", sample ,"_UMAP_groupbyscDblFinder_classification_NBAtlas.png"), width = 9, height = 7)
+  
+  FeaturePlot(Slyper2020_cell_seurat_list[[i]], reduction = "umap_RNA", features =  "scDblFinder.score") + scale_color_gradientn(colors = c("lightgray","gray","blue"))
+  ggsave(filename = paste0(output_figures_Slyper2020_cell, "01a_Slyper2020_cell_", sample ,"_UMAP_scDblFinder_score_NBAtlas.png"), width = 9, height = 7)
+  
+  # remove doublets
+  Slyper2020_cell_seurat_list[[i]] <- subset(Slyper2020_cell_seurat_list[[i]], subset = scDblFinder.class == "singlet")
+}
+
+Slyper2020_cell_seurat_list
+# 33694 genes x 4889 , 996 , 3734 cells 
+```
+```{r}
+# add metadata: assay, study
+for (i in 1:length(Slyper2020_cell_seurat_list)){
+  Slyper2020_cell_seurat_list[[i]]$Assay <- "single-cell"
+  Slyper2020_cell_seurat_list[[i]]$Study <- "Slyper2020_cell"
+  Slyper2020_cell_seurat_list[[i]]$Platform <- "10X_v2"
+}
+```
+
+```{r}
+saveRDS(object = Slyper2020_cell_seurat_list, file = paste0(output_Robjects, "01_Slyper2020_cell_seurat_list_NBAtlas.rds" ))
+```
+
+```{r}
+# Author annot figs
+for (i in 1:length(Slyper2020_cell_seurat_list)){
+  sample <- sampleList[i]
+  
+  #DimPlot(Slyper2020_cell_seurat_list[[i]], reduction = "umap_RNA", group.by = "Author_Annot")
+  
+  # setup colors
+  my_colors <- hue_pal()(length(levels(factor(Slyper2020_cell_seurat_list[[i]]$Author_Annot))))
+  # gray for NA
+  my_colors[ levels(factor(Slyper2020_cell_seurat_list[[i]]$Author_Annot)) == "not assigned"  ] <- "gray"
+  
+  names(my_colors) <- levels(factor(Slyper2020_cell_seurat_list[[i]]$Author_Annot))
+  
+  DimPlot(Slyper2020_cell_seurat_list[[i]], group.by = "Author_Annot") + scale_color_manual(name = "Author_Annot", values = my_colors)
+  ggsave(filename = paste0(output_figures_Slyper2020_cell, "01b_Slyper2020_cell_", sample ,"_UMAP_AuthorAnnot_NBAtlas.png"), width = 9, height = 7)
+}
+```
+
+```{r}
+# merge
+Slyper2020_cell <- merge(Slyper2020_cell_seurat_list[[1]], y = Slyper2020_cell_seurat_list[2:length(Slyper2020_cell_seurat_list)], project = "Slyper2020_cell", merge.data = TRUE)
+Slyper2020_cell #33694 genes x 9619 cells
+```
+```{r}
+# reprocess
+Slyper2020_cell <- seuPreProcess(Slyper2020_cell)
+#Slyper2020_cell@reductions$umap_RNA@misc # 28
+```
+```{r}
+DimPlot(Slyper2020_cell, reduction = "umap_RNA")
+
+# setup colors
+my_colors <- hue_pal()(length(levels(factor(Slyper2020_cell$Author_Annot))))
+# gray for NA
+my_colors[ levels(factor(Slyper2020_cell$Author_Annot)) == "not assigned"  ] <- "gray"
+  
+DimPlot(Slyper2020_cell, reduction = "umap_RNA", group.by = "Author_Annot", label = T, repel = T) + scale_color_manual(name = "Author_Annot", values = my_colors)
+ggsave(filename = paste0(output_figures_Slyper2020_cell, "01b_Slyper2020_cell_merged_UMAP_AuthorAnnot_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(Slyper2020_cell, reduction = "umap_RNA", group.by = "Sample")
+ggsave(filename = paste0(output_figures_Slyper2020_cell, "01b_Slyper2020_cell_merged_UMAP_Sample_NBAtlas.png"), width = 9, height = 7)
+
+#FeaturePlot(Slyper2020_cell, features = c("CDH19","PMP22","PLP1","S100B","SOX10","MPZ","ERBB3","FOXD3","CNP","SOX2"), min.cutoff = "q2", max.cutoff = "q98", order = T)
+```
+
+Save obj
+```{r}
+saveRDS(Slyper2020_cell, file = paste0(output_Robjects, "01_Slyper2020_cell_seuratObj_NBAtlas.rds"))
+```
+
+### Reload
+```{r}
+project <- "Slyper2020_cell"
+Slyper2020_cell <- readRDS(paste0(output_Robjects, "01_Slyper2020_cell_seuratObj_NBAtlas.rds"))
+```
+
+Get matrix and meta obj
+```{r}
+Slyper2020_cell_mtx <- GetAssayData(Slyper2020_cell, slot = "counts") #raw
+```
+
+Update gene names
+```{r}
+gene.names <- checkGeneSymbols(rownames(Slyper2020_cell_mtx), unmapped.as.na=FALSE)
+gene.names %>% filter(Approved == FALSE) %>% filter(x != Suggested.Symbol) # genes that need updating
+# 994
+gene.names <- gene.names$Suggested.Symbol
+gene.names <- gsub(pattern = " ///.*", replacement = "", x = gene.names) # e.g. LORICRIN /// LOXL2 to LORICRIN (choose first)
+rownames(Slyper2020_cell_mtx) <- make.unique(gene.names) # c("LCOR","LCOR","LCOR") to c("LCOR","LCOR.1","LCOR.2")
+
+Slyper2020_cell_meta <- Slyper2020_cell@meta.data
+```
+
+Cleanup
+```{r}
+rm(Slyper2020_cell, gene.names, sample_ids, cell_ids_v2, project) #don't remove _mtx and _meta
+gc()
+```
+
+## Slyper single-nucleus
+```{r}
+project <- "Slyper2020_nucleus"
+
+output_figures_Slyper2020_nucleus <- paste0(output_figures, "01_", project, "/")
+dir.create(output_figures_Slyper2020_nucleus)
+
+
+Slyper2020_nucleus_seurat_list <- list()
+
+sampleList <- c("Slyper2020_nucleus_HTAPP-244-SMP-451_CST", 
+                "Slyper2020_nucleus_HTAPP-244-SMP-451_EZ", 
+                "Slyper2020_nucleus_HTAPP-244-SMP-451_NST", 
+                "Slyper2020_nucleus_HTAPP-244-SMP-451_TST", 
+                "Slyper2020_nucleus_HTAPP-656-SMP-3481_TST")
+fileListh5 <- c("GSM4186965_HTAPP-244-SMP-451_CST_channel1_raw_gene_bc_matrices_h5.h5", 
+                "GSM4186966_HTAPP-244-SMP-451_EZ_channel1_raw_gene_bc_matrices_h5.h5", 
+                "GSM4186967_HTAPP-244-SMP-451_NST_channel1_raw_gene_bc_matrices_h5.h5", 
+                "GSM4186968_HTAPP-244-SMP-451_TST_channel1_raw_gene_bc_matrices_h5.h5", 
+                "GSM4186969_HTAPP-656-SMP-3481_TST_channel1_raw_gene_bc_matrices_h5.h5")
+fileListcsv <- c("GSM4186965_metadata_HTAPP-244-SMP-451_CST_channel1.csv", 
+                 "GSM4186966_metadata_HTAPP-244-SMP-451_EZ_channel1.csv", 
+                 "GSM4186967_metadata_HTAPP-244-SMP-451_NST_channel1.csv", 
+                 "GSM4186968_metadata_HTAPP-244-SMP-451_TST_channel1.csv", 
+                 "GSM4186969_metadata_HTAPP-656-SMP-3481_TST_channel1.csv" )
+
+for (i in 1:length(sampleList)){
+  #i <- 1
+  
+  sample <- sampleList[i]
+  dgCMtx <- Read10X_h5(paste0("/scratch/gent/vo/000/gvo00027/data/Single_Cell_Neuroblastoma/NB_human/Author_processed/Slyper2020/", fileListh5[i]))
+  
+  colnames(dgCMtx) <- gsub(pattern = "[0-9]*$", replacement = sample, x = colnames(dgCMtx)) # AAACCTGAGAAACCAT-1 to AAACCTGAGAAACCAT-Slyper2020_nucleus_HTAPP_312_SMP_901
+  
+  seuratObj <- CreateSeuratObject(dgCMtx, min.features = 200, project = sample)
+  
+  metaData <- read.csv(paste0("/scratch/gent/vo/000/gvo00027/data/Single_Cell_Neuroblastoma/NB_human/Author_processed/Slyper2020/Slyper2020_metadata/", fileListcsv[i]), header = T) # annotate	nReads	nUMI	nGene	percent_mito	emptydrop	doublet
+  
+  # HTAPP-312-SMP-901_fresh-T1_channel1-AAACCTGAGACGCAAC > Slyper2020_nucleus_AAACCTGAGACGCAAC-HTAPP-312-SMP-901_fresh-T1
+  cellnames <- str_extract(string = metaData$X, pattern = "-[A-Z]+$") #HTAPP-312-SMP-901_fresh-T1_channel1-AAACCTGAGACGCAAC > -AAACCTGAGACGCAAC
+  cellnames <- gsub(pattern = "-", replacement = "", x = cellnames) # remove -
+  cellnames <- paste0(cellnames, "-", sample) #
+  metaData$cellnames_NBN <- cellnames 
+  rownames(metaData) <- cellnames
+  
+  # add metadata
+  seuratObj$Sample <- sample
+  
+  seuratObj[["percent_mito"]] <- PercentageFeatureSet(seuratObj, pattern = "^MT-")
+  
+  # author annotation
+  seuratObj$Author_Annot <- "not assigned"
+  cells_intersect <- Cells(seuratObj)[which(Cells(seuratObj) %in% metaData$cellnames_NBN)]
+  seuratObj@meta.data[cells_intersect,]["Author_Annot"] <- metaData[cells_intersect,]["annotate"]
+  
+  print(seuratObj)
+  
+  # extra filtering
+  seuratObj <- subset(seuratObj, subset = nFeature_RNA > 200 & nCount_RNA > 500 & percent_mito < 10) #nucleus
+  
+  Slyper2020_nucleus_seurat_list[[i]] <- seuratObj
+  
+  names(Slyper2020_nucleus_seurat_list)[i] <- sample
+  
+  rm(dgCMtx, seuratObj)
+  
+}
+# Some cells in `sce` have an extremely low read counts; note that these could trigger errors and might best be filtered out
+
+Slyper2020_nucleus_seurat_list
+#pre-filt: 33694 genes x 6361, 10810, 7726, 8088, 10777
+#post-filt: 33694 genes x 6152, 7304, 7441, 6780, 6437 nuclei 
+
+```
+### Doublets
+Pre-processing
+```{r}
+for (i in 1:length(Slyper2020_nucleus_seurat_list)){
+  #i <- 1
+  
+  sample <- sampleList[i]
+  
+  seuratObj <- seuPreProcess(Slyper2020_nucleus_seurat_list[[i]])
+  
+  DimPlot(seuratObj, reduction = "umap_RNA")
+  ggsave(paste0(output_figures_Slyper2020_nucleus, "01a_", project, "_", sample, "UMAP_prefilt_seuratClusters_NBAtlas.png"), width = 9, height = 7)
+  
+  DimPlot(seuratObj, reduction = "umap_RNA", group.by = "Author_Annot")
+  ggsave(paste0(output_figures_Slyper2020_nucleus, "01a_", project, "_", sample, "UMAP_prefilt_AuthorAnnot_NBAtlas.png"), width = 9, height = 7)
+  
+  Slyper2020_nucleus_seurat_list[[i]] <- seuratObj
+  rm(seuratObj)
+  
+}
+# Slyper2020_nucleus_seurat_list[[1]]@reductions$umap_RNA@misc
+# npcs used: 37, 39, 36, 34, 34
+
+```
+
+scDblFinder:
+
+```{r}
+for (i in 1:length(Slyper2020_nucleus_seurat_list)){
+  #i <- 1
+  
+  sample <- sampleList[i]
+  
+  # conversion to sce
+  sce <- as.SingleCellExperiment(Slyper2020_nucleus_seurat_list[[i]], assay = 'RNA')
+  
+  # run scDblFinder
+  sce <- scDblFinder(sce, verbose = T, cluster = "seurat_clusters") #BPPARAM = bp,
+  
+  # results table
+  table(sce$scDblFinder.class) # singlet 2619, doublet 102
+  table(sce$scDblFinder.class)/length(sce$scDblFinder.class) * 100
+  
+  # save obj
+  saveRDS(colData(sce), paste0(output_Robjects, "/01_scDblFinder/", "01a_Slyper2020_nucleus_", sample ,"_scDblFinder_ClusterBatch_colData_NBAtlas.rds"))
+  
+  # back to Seurat
+  # as.Seurat gives errors when using integrated object
+  metaData <- colData(sce) #DFrame
+  rm(sce)
+  gc()
+  
+  Slyper2020_nucleus_seurat_list[[i]][["scDblFinder.class"]] <- metaData$scDblFinder.class
+  Slyper2020_nucleus_seurat_list[[i]][["scDblFinder.score"]] <- metaData$scDblFinder.score
+  
+  Slyper2020_nucleus_seurat_list[[i]][["scDblFinder.mostLikelyOrigin"]] <- metaData$scDblFinder.mostLikelyOrigin
+  Slyper2020_nucleus_seurat_list[[i]][["scDblFinder.originAmbiguous"]] <- metaData$scDblFinder.originAmbiguous
+  
+  # top 5 most likely origins per cluster
+  Slyper2020_nucleus_seurat_list[[i]]@meta.data %>% filter(scDblFinder.originAmbiguous == FALSE) %>% group_by(seurat_clusters, scDblFinder.mostLikelyOrigin) %>% summarize(freq = n()) %>% top_n(n = 5, wt = freq)
+  
+  # plots
+  DimPlot(Slyper2020_nucleus_seurat_list[[i]], reduction = "umap_RNA", group.by = "scDblFinder.class")
+  ggsave(filename = paste0(output_figures_Slyper2020_nucleus, "01a_Slyper2020_nucleus_", sample ,"_UMAP_groupbyscDblFinder_classification_NBAtlas.png"), width = 9, height = 7)
+  
+  FeaturePlot(Slyper2020_nucleus_seurat_list[[i]], reduction = "umap_RNA", features =  "scDblFinder.score") + scale_color_gradientn(colors = c("lightgray","gray","blue"))
+  ggsave(filename = paste0(output_figures_Slyper2020_nucleus, "01a_Slyper2020_nucleus_", sample ,"_UMAP_scDblFinder_score_NBAtlas.png"), width = 9, height = 7)
+  
+  # remove doublets
+  
+  Slyper2020_nucleus_seurat_list[[i]] <- subset(Slyper2020_nucleus_seurat_list[[i]], subset = scDblFinder.class == "singlet")
+}
+
+Slyper2020_nucleus_seurat_list
+# 33694 genes x 5550 , 6541 , 6542 , 6041 , 5799 nuclei
+```
+```{r}
+# add metadata: assay, study
+for (i in 1:length(Slyper2020_nucleus_seurat_list)){
+  Slyper2020_nucleus_seurat_list[[i]]$Assay <- "single-nucleus"
+  Slyper2020_nucleus_seurat_list[[i]]$Study <- "Slyper2020_nucleus"
+  Slyper2020_nucleus_seurat_list[[i]]$Platform <- "10X_v2"
+}
+```
+
+```{r}
+saveRDS(object = Slyper2020_nucleus_seurat_list, file = paste0(output_Robjects, "01_Slyper2020_nucleus_seurat_list_NBAtlas.rds" ))
+# Slyper2020_nucleus_seurat_list <- readRDS(paste0(output_Robjects, "01_Slyper2020_nucleus_seurat_list_NBAtlas.rds" ))
+```
+
+```{r}
+# Author annot figs
+for (i in 1:length(Slyper2020_nucleus_seurat_list)){
+  sample <- sampleList[i]
+  
+  #DimPlot(Slyper2020_nucleus_seurat_list[[i]], reduction = "umap_RNA", group.by = "Author_Annot")
+  
+  # setup colors
+  my_colors <- hue_pal()(length(levels(factor(Slyper2020_nucleus_seurat_list[[i]]$Author_Annot))))
+  # gray for NA
+  my_colors[ levels(factor(Slyper2020_nucleus_seurat_list[[i]]$Author_Annot)) == "not assigned"  ] <- "gray"
+  
+  names(my_colors) <- levels(factor(Slyper2020_nucleus_seurat_list[[i]]$Author_Annot))
+  
+  DimPlot(Slyper2020_nucleus_seurat_list[[i]], group.by = "Author_Annot") + scale_color_manual(name = "Author_Annot", values = my_colors)
+  ggsave(filename = paste0(output_figures_Slyper2020_nucleus, "01b_Slyper2020_nucleus_", sample ,"_UMAP_AuthorAnnot_NBAtlas.png"), width = 9, height = 7)
+}
+```
+
+### Merge
+```{r}
+# merge
+Slyper2020_nucleus <- merge(Slyper2020_nucleus_seurat_list[[1]], y = Slyper2020_nucleus_seurat_list[2:length(Slyper2020_nucleus_seurat_list)], project = "Slyper2020_nucleus", merge.data = TRUE)
+Slyper2020_nucleus #33694 genes x 30473
+```
+```{r}
+# reprocess
+Slyper2020_nucleus <- seuPreProcess(Slyper2020_nucleus)
+#Slyper2020_nucleus@reductions$umap_RNA@misc # 
+```
+```{r}
+DimPlot(Slyper2020_nucleus, reduction = "umap_RNA")
+
+# setup colors
+my_colors <- hue_pal()(length(levels(factor(Slyper2020_nucleus$Author_Annot))))
+# gray for NA
+my_colors[ levels(factor(Slyper2020_nucleus$Author_Annot)) == "not assigned"  ] <- "gray"
+  
+DimPlot(Slyper2020_nucleus, reduction = "umap_RNA", group.by = "Author_Annot", label = T, repel = T) + scale_color_manual(name = "Author_Annot", values = my_colors)
+ggsave(filename = paste0(output_figures_Slyper2020_nucleus, "01b_Slyper2020_nucleus_merged_UMAP_AuthorAnnot_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(Slyper2020_nucleus, reduction = "umap_RNA", group.by = "Sample")
+ggsave(filename = paste0(output_figures_Slyper2020_nucleus, "01b_Slyper2020_nucleus_merged_UMAP_Sample_NBAtlas.png"), width = 9, height = 7)
+
+```
+```{r}
+# check some markers
+FeaturePlot(Slyper2020_nucleus, features = c("PHOX2B", "DCN", "CDH19", "HBB"), min.cutoff = "q2", max.cutoff = "q98", order = T)
+FeaturePlot(Slyper2020_nucleus, features = c("HAND2", "COL1A1", "SOX10", "HBA1"),  min.cutoff = "q2", max.cutoff = "q98", order = T)
+```
+
+
+Save obj
+```{r}
+saveRDS(Slyper2020_nucleus, file = paste0(output_Robjects, "01_Slyper2020_nucleus_seuratObj_NBAtlas.rds"))
+```
+
+### Reload
+```{r}
+project <- "Slyper2020_nucleus"
+Slyper2020_nucleus <- readRDS(paste0(output_Robjects, "01_Slyper2020_nucleus_seuratObj_NBAtlas.rds"))
+```
+
+Get matrix and meta obj
+```{r}
+Slyper2020_nucleus_mtx <- GetAssayData(Slyper2020_nucleus, slot = "counts") #raw
+```
+
+Update gene names
+```{r}
+gene.names <- checkGeneSymbols(rownames(Slyper2020_nucleus_mtx), unmapped.as.na=FALSE)
+gene.names %>% filter(Approved == FALSE) %>% filter(x != Suggested.Symbol) # genes that need updating
+# 994
+gene.names <- gene.names$Suggested.Symbol
+gene.names <- gsub(pattern = " ///.*", replacement = "", x = gene.names) # e.g. LORICRIN /// LOXL2 to LORICRIN (choose first)
+rownames(Slyper2020_nucleus_mtx) <- make.unique(gene.names) # c("LCOR","LCOR","LCOR") to c("LCOR","LCOR.1","LCOR.2")
+
+Slyper2020_nucleus_meta <- Slyper2020_nucleus@meta.data
+```
+
+Cleanup
+```{r}
+rm(Slyper2020_nucleus, gene.names, sample_ids, cell_ids_v2, project) #don't remove _mtx and _meta
+gc()
+```
+
+## Verhoeven 2022
+Data from: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE147766
+
+```{r}
+project <- "Verhoeven2022"
+
+output_figures_Verhoeven2022 <- paste0(output_figures, "01_", project, "/")
+dir.create(output_figures_Verhoeven2022)
+
+
+sampleList_Verhoeven <- c("Verhoeven2022_NB01", "Verhoeven2022_NB02", "Verhoeven2022_NB09", "Verhoeven2022_NB11", "Verhoeven2022_NB12", "Verhoeven2022_NB13", "Verhoeven2022_NB15", "Verhoeven2022_NB16", "Verhoeven2022_NB17", "Verhoeven2022_NB18", "Verhoeven2022_NB19",              "Verhoeven2022_NB20", "Verhoeven2022_NB21", "Verhoeven2022_NB22", "Verhoeven2022_NB23",  "Verhoeven2022_NB24", "Verhoeven2022_NB26",  "Verhoeven2022_NB34",  "Verhoeven2022_NB37")
+
+Verhoeven2022_seurat_list <- list()
+
+for (i in 1:length(sampleList_Verhoeven)){
+  sample <- sampleList_Verhoeven[i]
+  Verhoeven2022_seurat_list[[i]] <- readRDS(paste0("/scratch/gent/vo/000/gvo00027/data/Single_Cell_Neuroblastoma/NB_human/Author_processed/Verhoeven2022/raw_count_seurat_", sample, ".rds"))
+  
+}
+names(Verhoeven2022_seurat_list) <- sampleList_Verhoeven
+
+rm(sample, i)
+
+Verhoeven2022_seurat_list
+
+for (i in 1:length(Verhoeven2022_seurat_list)){
+  print(names(Verhoeven2022_seurat_list)[i])
+  print(dim(Verhoeven2022_seurat_list[[i]]))
+}
+# "Verhoeven2022_NB01" # 33868   949
+# "Verhoeven2022_NB02" # 33868  1361
+# "Verhoeven2022_NB09" # 33868  6623
+# "Verhoeven2022_NB11" # 33868 10267
+# "Verhoeven2022_NB12" # 33868  5191
+# "Verhoeven2022_NB13" # 33868 17287
+# "Verhoeven2022_NB15" # 33868  5488
+# "Verhoeven2022_NB16" # 33868  2763
+# "Verhoeven2022_NB17" # 33868  1608
+# "Verhoeven2022_NB18" # 33868  4667
+# "Verhoeven2022_NB19" # 33868  3217
+# "Verhoeven2022_NB20" # 33868   677
+# "Verhoeven2022_NB21" # 33868   465
+# "Verhoeven2022_NB22" # 33868  1075
+# "Verhoeven2022_NB23" # 33868  2707
+# "Verhoeven2022_NB24" # 33868  2973
+# "Verhoeven2022_NB26" # 33868  5288
+# "Verhoeven2022_NB34" # 32966  5327
+# "Verhoeven2022_NB37" # 32966  8347
+```
+
+Add metadata (using original cell names)
+from: https://github.com/shenglinmei/NB.immune.atlas: Cell annotation (this also includes cells from other published studies) but only for immune cells, tumor cells (+ fibroblast, endothelial, etc.) not annotated but included in dataset
+
+```{r}
+Verhoeven_cellAnnot <- read.csv("/scratch/gent/vo/000/gvo00027/data/Single_Cell_Neuroblastoma/NB_human/Author_processed/Verhoeven2022/all.cells.csv")
+
+#Verhoeven_cellAnnot[duplicated(Verhoeven_cellAnnot$name),] # there are some duplicated but from other study (and only a couple)
+#remove duplicated:
+Verhoeven_cellAnnot <- Verhoeven_cellAnnot[! duplicated(Verhoeven_cellAnnot$name), ]
+
+# cellnames in csv: -1 while in GEO obj .1
+cellnames <- Verhoeven_cellAnnot$name
+cellnames <- gsub(pattern = "-1", replacement = ".1",  x = cellnames)
+rownames(Verhoeven_cellAnnot) <- cellnames
+
+i <- 1
+
+for (i in 1: length(sampleList_Verhoeven)){
+  
+  cells_intersect <- Cells(Verhoeven2022_seurat_list[[i]])[ which(Cells(Verhoeven2022_seurat_list[[i]]) %in% rownames(Verhoeven_cellAnnot)) ]
+  
+  Verhoeven2022_seurat_list[[i]][["Author_Annot"]] <- "not assigned"
+  
+  Verhoeven2022_seurat_list[[i]]@meta.data[cells_intersect,]["Author_Annot"] <- Verhoeven_cellAnnot[cells_intersect,]["cell"]
+  #check
+  print(table(Verhoeven2022_seurat_list[[i]]$Author_Annot))
+  
+}
+```
+
+
+Rename cell labels (cellID_AuthorYear_sample)
+```{r}
+head(Cells(Verhoeven2022_seurat_list[[i]]))
+
+for (i in 1:length(Verhoeven2022_seurat_list)){
+  sample <- sampleList_Verhoeven[i]
+  cell_ids_v2 <- Cells(Verhoeven2022_seurat_list[[i]])
+  cell_ids_v2 <- gsub("NB[0-9]+_", "", cell_ids_v2) # remove "NB.."
+  cell_ids_v2 <- gsub(".1$", paste0("-", sample), cell_ids_v2) # replace ".1" with "-Verhoeven_NB.."
+  Verhoeven2022_seurat_list[[i]] <- RenameCells(Verhoeven2022_seurat_list[[i]], new.names = cell_ids_v2)
+  #head(Cells(Verhoeven2022_seurat_list[[i]]))
+} 
+
+head(Cells(Verhoeven2022_seurat_list[[1]]))
+head(Cells(Verhoeven2022_seurat_list[[7]]))
+```
+
+### Filter
+```{r}
+for (i in 1:length(Verhoeven2022_seurat_list)){
+  Verhoeven2022_seurat_list[[i]]$percent_mito <- PercentageFeatureSet(Verhoeven2022_seurat_list[[i]], pattern = "^MT-")
+  #max(Verhoeven2022_seurat_list[[i]]$percent_mito)
+  
+  Verhoeven2022_seurat_list[[i]] <- subset(Verhoeven2022_seurat_list[[i]], subset = percent_mito < 25 & nCount_RNA > 500 & nFeature_RNA > 200)
+  
+  print(names(Verhoeven2022_seurat_list)[i])
+  print(dim(Verhoeven2022_seurat_list[[i]]))
+}
+## "Verhoeven2022_NB01"
+# 33868   949
+# "Verhoeven2022_NB02"
+# 33868  1361
+# "Verhoeven2022_NB09"
+# 33868  6623
+# "Verhoeven2022_NB11"
+# 33868 10267
+# "Verhoeven2022_NB12"
+# 33868  5188
+# "Verhoeven2022_NB13"
+# 33868 17287
+# "Verhoeven2022_NB15"
+# 33868  5488
+# "Verhoeven2022_NB16"
+# 33868  2763
+# "Verhoeven2022_NB17"
+# 33868  1608
+# "Verhoeven2022_NB18"
+# 33868  4667
+# "Verhoeven2022_NB19"
+# 33868  3217
+# "Verhoeven2022_NB20"
+# 33868   677
+# "Verhoeven2022_NB21"
+# 33868   331
+# "Verhoeven2022_NB22"
+# 33868  1073
+# "Verhoeven2022_NB23"
+# 33868  2705
+# "Verhoeven2022_NB24"
+# 33868  2973
+# "Verhoeven2022_NB26"
+# 33868  5288
+# "Verhoeven2022_NB34"
+# 32966  5308
+# "Verhoeven2022_NB37"
+# 32966  8346
+
+# very few extra cells filtered out
+```
+
+### Pre-processing
+
+```{r}
+for (i in 1:length(Verhoeven2022_seurat_list)){
+  sample <- sampleList_Verhoeven[i]
+  
+  #seuratObj <- seuPreProcess(Verhoeven2022_seurat_list[[i]])
+  seuratObj <- Verhoeven2022_seurat_list[[i]]
+  
+  DimPlot(seuratObj, reduction = "umap_RNA")
+  ggsave(paste0(output_figures_Verhoeven2022, "01a_", project, "_", sample, "_UMAP_prefilt_seuratClusters_NBAtlas.png"), width = 9, height = 7)
+  
+  # setup colors for author annot
+  my_colors <- hue_pal()(length(levels(factor(seuratObj$Author_Annot))))
+  # gray for NA
+  my_colors[ levels(factor(seuratObj$Author_Annot)) == "not assigned"  ] <- "gray"
+  
+  names(my_colors) <- levels(factor(seuratObj$Author_Annot))
+  
+  DimPlot(seuratObj, reduction = "umap_RNA", group.by = "Author_Annot") + scale_color_manual(name = "Author_Annot", values = my_colors)
+  
+  ggsave(paste0(output_figures_Verhoeven2022, "01a_", project, "_", sample, "_UMAP_prefilt_AuthorAnnot_NBAtlas.png"), width = 9, height = 7)
+  
+  Verhoeven2022_seurat_list[[i]] <- seuratObj
+  rm(seuratObj)
+}
+
+for (i in 1: length(Verhoeven2022_seurat_list)){
+  print(Verhoeven2022_seurat_list[[i]]@reductions$umap_RNA@misc)
+}
+# npcs used: 
+
+# 36, 37, 29, 32, 30, 29, 28, 34, 36, 34, 34, 40, 41, 38, 33, 31, 30, 23, 28
+```
+
+### scDblFinder
+
+```{r}
+for (i in 1:length(Verhoeven2022_seurat_list)){
+  sample <- sampleList_Verhoeven[i]
+  
+  # conversion to sce
+  sce <- as.SingleCellExperiment(Verhoeven2022_seurat_list[[i]], assay = 'RNA')
+  
+  # run scDblFinder
+  sce <- scDblFinder(sce, verbose = T, cluster = "seurat_clusters") #BPPARAM = bp,
+  
+  # results table
+  table(sce$scDblFinder.class) 
+  table(sce$scDblFinder.class)/length(sce$scDblFinder.class) * 100
+  
+  # save obj
+  saveRDS(colData(sce), paste0(output_Robjects, "/01_scDblFinder/", "01a_Verhoeven2022_", sample ,"_scDblFinder_ClusterBatch_colData_NBAtlas.rds"))
+  
+  # back to Seurat
+  # as.Seurat gives errors when using integrated object
+  metaData <- colData(sce) #DFrame
+  rm(sce)
+  gc()
+  
+  Verhoeven2022_seurat_list[[i]][["scDblFinder.class"]] <- metaData$scDblFinder.class
+  Verhoeven2022_seurat_list[[i]][["scDblFinder.score"]] <- metaData$scDblFinder.score
+  
+  Verhoeven2022_seurat_list[[i]][["scDblFinder.mostLikelyOrigin"]] <- metaData$scDblFinder.mostLikelyOrigin
+  Verhoeven2022_seurat_list[[i]][["scDblFinder.originAmbiguous"]] <- metaData$scDblFinder.originAmbiguous
+  
+  # top 5 most likely origins per cluster
+  Verhoeven2022_seurat_list[[i]]@meta.data %>% filter(scDblFinder.originAmbiguous == FALSE) %>% group_by(seurat_clusters, scDblFinder.mostLikelyOrigin) %>% summarize(freq = n()) %>% top_n(n = 5, wt = freq)
+  
+  # plots
+  DimPlot(Verhoeven2022_seurat_list[[i]], reduction = "umap_RNA", group.by = "scDblFinder.class")
+  ggsave(filename = paste0(output_figures_Verhoeven2022, "01a_Verhoeven2022_", sample ,"_UMAP_groupbyscDblFinder_classification_NBAtlas.png"), width = 9, height = 7)
+  
+  FeaturePlot(Verhoeven2022_seurat_list[[i]], reduction = "umap_RNA", features =  "scDblFinder.score") + scale_color_gradientn(colors = c("lightgray","gray","blue"))
+  ggsave(filename = paste0(output_figures_Verhoeven2022, "01a_Verhoeven2022_", sample ,"_UMAP_scDblFinder_score_NBAtlas.png"), width = 9, height = 7)
+  
+  # remove doublets
+  
+  Verhoeven2022_seurat_list[[i]] <- subset(Verhoeven2022_seurat_list[[i]], subset = scDblFinder.class == "singlet")
+}
+
+for (i in 1:length(Verhoeven2022_seurat_list)){
+  print(sampleList_Verhoeven[i])
+  print(dim(Verhoeven2022_seurat_list[[i]]))
+}
+# "Verhoeven2022_NB01" 33868   915
+# "Verhoeven2022_NB02" 33868  1312
+# "Verhoeven2022_NB09" 33868  6101
+# "Verhoeven2022_NB11" 33868  9606
+# "Verhoeven2022_NB12" 33868  4765
+# "Verhoeven2022_NB13" 33868 15469
+# "Verhoeven2022_NB15" 33868  5193
+# "Verhoeven2022_NB16" 33868  2684
+# "Verhoeven2022_NB17" 33868  1559
+# "Verhoeven2022_NB18" 33868  4477
+# "Verhoeven2022_NB19" 33868  3120
+# "Verhoeven2022_NB20" 33868   669
+# "Verhoeven2022_NB21" 33868   313
+# "Verhoeven2022_NB22" 33868  1030
+# "Verhoeven2022_NB23" 33868  2608
+# "Verhoeven2022_NB24" 33868  2863
+# "Verhoeven2022_NB26" 33868  5097
+# "Verhoeven2022_NB34" 32966  5150
+# "Verhoeven2022_NB37" 32966  7797
+```
+```{r}
+# add metadata: assay, study
+for (i in 1:length(Verhoeven2022_seurat_list)){
+  Verhoeven2022_seurat_list[[i]]$Assay <- "single-cell"
+  Verhoeven2022_seurat_list[[i]]$Study <- "Verhoeven2022"
+  Verhoeven2022_seurat_list[[i]]$Platform <- "10X_v2"
+}
+```
+
+```{r}
+# Author annot figs
+for (i in 1:length(Verhoeven2022_seurat_list)){
+  sample <- sampleList_Verhoeven[i]
+  
+  # setup colors
+  my_colors <- hue_pal()(length(levels(factor(Verhoeven2022_seurat_list[[i]]$Author_Annot))))
+  # gray for NA
+  my_colors[ levels(factor(Verhoeven2022_seurat_list[[i]]$Author_Annot)) == "not assigned"  ] <- "gray"
+  
+  names(my_colors) <- levels(factor(Verhoeven2022_seurat_list[[i]]$Author_Annot))
+  
+  DimPlot(Verhoeven2022_seurat_list[[i]], group.by = "Author_Annot") + scale_color_manual(name = "Author_Annot", values = my_colors)
+  ggsave(filename = paste0(output_figures_Verhoeven2022, "01b_Verhoeven2022_", sample ,"_UMAP_AuthorAnnot_NBAtlas.png"), width = 9, height = 7)
+}
+```
+
+```{r}
+saveRDS(Verhoeven2022_seurat_list, file = paste0(output_Robjects, "01_Verhoeven2022_seurat_list_NBAtlas.rds"))
+# reload
+# Verhoeven2022_seurat_list <- readRDS(paste0(output_Robjects, "01_Verhoeven2022_seurat_list_NBAtlas.rds"))
+```
+
+### Merge
+Merge obj
+```{r}
+Verhoeven2022 <- merge(Verhoeven2022_seurat_list[[1]], y = Verhoeven2022_seurat_list[2:length(Verhoeven2022_seurat_list)], project = "Verhoeven2022", merge.data = TRUE)
+```
+
+```{r}
+table(Verhoeven2022$orig.ident)
+Verhoeven2022$Sample <- paste0(project, "_", Verhoeven2022$orig.ident)
+table(Verhoeven2022$Sample)
+
+Verhoeven2022$Platform <- "10X_v2"
+```
+```{r}
+# reprocess
+Verhoeven2022 <- seuPreProcess(Verhoeven2022)
+#Verhoeven2022@reductions$umap_RNA@misc #29 
+```
+```{r}
+DimPlot(Verhoeven2022, reduction = "umap_RNA")
+
+DimPlot(Verhoeven2022, reduction = "umap_RNA", group.by = "Sample")
+ggsave(filename = paste0(output_figures_Verhoeven2022, "01b_Verhoeven2022_merged_UMAP_Sample_NBAtlas.png"), width = 9, height = 7)
+
+# setup colors
+my_colors <- hue_pal()(length(levels(factor(Verhoeven2022$Author_Annot))))
+# gray for NA
+my_colors[ levels(factor(Verhoeven2022$Author_Annot)) == "not assigned"  ] <- "gray"
+  
+DimPlot(Verhoeven2022, reduction = "umap_RNA", group.by = "Author_Annot", label = T, repel = T) + scale_color_manual(name = "Author_Annot", values = my_colors)
+ggsave(filename = paste0(output_figures_Verhoeven2022, "01b_Verhoeven2022_merged_UMAP_AuthorAnnot_NBAtlas.png"), width = 9, height = 7)
+```
+
+```{r}
+# check some markers
+#source("/kyukon/data/gent/vo/000/gvo00027/vsc44341/R_HelperFunctions_NB/genesets_NB.R")
+FeaturePlot(Verhoeven2022, reduction = "umap_RNA", features = markers_neuroendocrine, min.cutoff = "q2", max.cutoff = "q98", order = TRUE)
+ggsave(filename = paste0(output_figures_Verhoeven2022, "01b_Verhoeven2022_merged_UMAP_NEMarkers_NBAtlas.png"), width = 15, height = 25)
+```
+
+Save obj
+```{r}
+saveRDS(object = Verhoeven2022, file = paste0(output_Robjects, "01_Verhoeven2022_seuratObj_NBAtlas.rds" ))
+```
+
+### Reload
+```{r}
+project <- "Verhoeven2022"
+Verhoeven2022 <- readRDS(paste0(output_Robjects, "01_", project,"_seuratObj_NBAtlas.rds"))
+```
+
+Get matrix and meta obj
+```{r}
+Verhoeven2022_mtx <- GetAssayData(Verhoeven2022, slot = "counts") #raw
+```
+
+Update gene names
+```{r}
+gene.names <- checkGeneSymbols(rownames(Verhoeven2022_mtx), unmapped.as.na=FALSE)
+gene.names %>% filter(Approved == FALSE) %>% filter(x != Suggested.Symbol) # genes that need updating # 302
+gene.names <- gene.names$Suggested.Symbol
+gene.names <- gsub(pattern = " ///.*", replacement = "", x = gene.names) # e.g. LORICRIN /// LOXL2 to LORICRIN (choose first)
+rownames(Verhoeven2022_mtx) <- make.unique(gene.names) # c("LCOR","LCOR","LCOR") to c("LCOR","LCOR.1","LCOR.2")
+
+Verhoeven2022_meta <- Verhoeven2022@meta.data
+```
+
+Cleanup
+```{r}
+rm(seuratObj, Verhoeven2022_seurat_list, gene.names, sample_ids, cell_ids_v2, project) #don't remove _mtx and _meta
+gc()
+```
+
+## Costa 2022
+```{r}
+project <- "Costa2022"
+output_figures_Costa2022 <- paste0(output_figures, "01_", project, "/")
+dir.create(output_figures_Costa2022)
+
+Costa2022 <- readRDS("/data/gent/vo/000/gvo00027/SingleCell10X/data/NB_human/Janoueix2022_18NB/18_NB_tumors_integration.rds")
+Costa2022 # 59070 genes x 54403 cells
+
+table(Costa2022$myOrig.ident) # samples
+```
+```{r}
+DimPlot(Costa2022, reduction = "umap", group.by = "cell_annotation", label = T)
+ggsave(paste0(output_figures_Costa2022, "01a_Costa2022_UMAP_pre-filtering_AuthorAnnot_NBAtlas.png") ,  width = 9, height = 7)
+```
+
+
+Subset published samples
+```{r}
+#TR6 to TR6_NB1535
+Costa2022$myOrig.ident[ Costa2022$myOrig.ident == "TR6_NB1535" ] <- "TR6"
+table(Costa2022$myOrig.ident)
+
+sum(Costa2022$myOrig.ident %in% c("TD3","TD4","TD5","TD6","TR2","TR3","TR4","TR5","TR6")) #18990
+Costa2022 <- subset(Costa2022, subset = myOrig.ident %in% c("TD3","TD4","TD5","TD6","TR2","TR3","TR4","TR5","TR6")) #TR6 = TR6_NB1535
+Costa2022
+```
+Rename cell labels (cellID_AuthorYear_sample)
+```{r}
+head(Cells(Costa2022)) #"AAACCCAAGGCGTCCT_1"
+tail(Cells(Costa2022))
+
+cell_ids_v2 <- gsub(pattern = "_[0-9]+$", replacement = "", x = Cells(Costa2022))
+cell_ids_v2 <- paste0(cell_ids_v2, "_", project, "_", Costa2022$myOrig.ident)
+any(duplicated(cell_ids_v2)) #false
+head(cell_ids_v2)
+tail(cell_ids_v2)
+Costa2022 <- RenameCells(Costa2022, new.names = cell_ids_v2)
+head(Cells(Costa2022))
+```
+
+Filter
+```{r}
+Costa2022[["percent_mito"]] <- PercentageFeatureSet(Costa2022, pattern = "^MT-")
+all(Costa2022$percent_mito == Costa2022$percent.mt)
+
+sum(Costa2022$percent_mito >= 25) #0
+sum(Costa2022$nCount_RNA <= 500) #381
+sum(Costa2022$nFeature_RNA <= 200) # 0
+```
+```{r}
+Costa2022 <- subset(Costa2022, subset = percent_mito < 25 & nCount_RNA > 500 & nFeature_RNA > 200)
+Costa2022 #59070 genes x 18609 cells
+
+table(Costa2022$myOrig.ident)
+```
+
+Preprocessing (not necessary)
+Doublets already removed
+
+Study, Sample & Author_Annot column:
+Study: AuthorYear
+Platform: Assay_version
+Assay: single-cell/nucleus
+Sample: AuthorYear_sample
+Author_Annot: original author annotation
+```{r}
+Costa2022$Sample <- paste0(project, "_", Costa2022$myOrig.ident)
+
+Costa2022$Study <- "Costa2022"
+Costa2022$Assay <- "single-cell"
+Costa2022$Platform <- "10X_v3.1"
+Costa2022$Author_Annot <- Costa2022$cell_annotation
+```
+
+```{r}
+DimPlot(Costa2022, reduction = "umap", group.by = "Author_Annot", label = T)
+ggsave(paste0(output_figures_Costa2022, "01b_Costa2022_UMAP_AuthorAnnot_NBAtlas.png") ,  width = 9, height = 7)
+```
+
+Save obj
+```{r}
+saveRDS(Costa2022 , file = paste0(output_Robjects, "01_", project,"_seuratObj_NBAtlas.rds"))
+```
+
+### Reload
+```{r}
+project <- "Costa2022"
+Costa2022 <- readRDS(paste0(output_Robjects, "01_", project,"_seuratObj_NBAtlas.rds"))
+```
+
+Get matrix and meta obj
+```{r}
+Costa2022_mtx <- GetAssayData(Costa2022, slot = "counts") #raw
+```
+
+Update gene names
+```{r}
+gene.names <- checkGeneSymbols(rownames(Costa2022_mtx), unmapped.as.na=FALSE)
+gene.names %>% filter(Approved == FALSE) %>% filter(x != Suggested.Symbol) # genes that need updating (322)
+gene.names <- gene.names$Suggested.Symbol
+gene.names <- gsub(pattern = " ///.*", replacement = "", x = gene.names) # e.g. LORICRIN /// LOXL2 to LORICRIN (choose first)
+rownames(Costa2022_mtx) <- make.unique(gene.names) # c("LCOR","LCOR","LCOR") to c("LCOR","LCOR.1","LCOR.2")
+
+Costa2022_meta <- Costa2022@meta.data
+```
+
+Cleanup
+```{r}
+rm(Costa2022, gene.names, sample_ids, cell_ids_v2, project) #don't remove _mtx and _meta
+gc()
+```
+# Merge all
+Merge matrices and meta data as lists
+```{r}
+nb_matrix <- list(Dong2020_mtx, Jansky2021_mtx, Kildisiute2021_10X_mtx, Slyper2020_cell_mtx, Slyper2020_nucleus_mtx, Verhoeven2022_mtx, Costa2022_mtx) # 6.9 GB
+
+nb_meta <- list(Dong2020_meta, Jansky2021_meta, Kildisiute2021_10X_meta, Slyper2020_cell_meta, Slyper2020_nucleus_meta, Verhoeven2022_meta, Costa2022_meta)
+
+studies <- c("Dong2020", "Jansky2021", "Kildisiute10X", "Slyper2020_cell", "Slyper2020_nucleus", "Verhoeven2022", "Costa2022")
+
+names(nb_matrix) <- studies
+names(nb_meta) <- studies
+```
+
+```{r}
+# cleanup
+rm(Dong2020_mtx, Jansky2021_mtx, Kildisiute2021_10X_mtx, Slyper2020_cell_mtx, Slyper2020_nucleus_mtx, Verhoeven2022_mtx, Costa2022_mtx)
+gc()
+```
+
+Save matrix and meta data
+```{r}
+saveRDS(nb_matrix, file = paste0(output_Robjects, "01_matrix_list_NBAtlas.rds")) #1.2 GB zipped
+saveRDS(nb_meta, file = paste0(output_Robjects, "01_meta_list_NBAtlas.rds"))
+```
+
+### Reload
+```{r}
+nb_matrix <- readRDS(paste0(output_Robjects, "01_matrix_list_NBAtlas.rds"))
+
+studies <- c("Dong2020", "Jansky2021", "Kildisiute10X", "Slyper2020_cell", "Slyper2020_nucleus", "Verhoeven2022", "Costa2022")
+```
+
+```{r}
+length(nb_matrix)
+
+for(i in 1:length(nb_matrix)){
+  print(names(nb_matrix)[i])
+  print(dim(nb_matrix[[i]]))
+}
+```
+
+```{r}
+#merged mtx
+#counts <- GetAssayData(object = merged, slot = "counts") # extract counts
+counts <- RowMergeSparseMatrices(nb_matrix[[1]], nb_matrix[2:length(nb_matrix)])
+
+#6.9 GB
+gc()
+
+#nonzero <- counts > 0 #for every gene more than zero counts per cell or not
+keep_genes <- Matrix::rowSums(counts > 0) >= 10 # keep all genes with expression in min 10 cells
+gc()
+
+filtered_counts <- counts[keep_genes, ]
+dim(filtered_counts) # 42413 genes x 362991 cells
+#filtered_merged <- CreateSeuratObject(filtered_counts)
+
+rm(keep_genes, counts)
+gc()
+```
+```{r}
+# save to h5
+library(DropletUtils)
+dir.create("01_Import_Preprocessing_NBAtlas/h5objects")
+
+write10xCounts('01_Import_Preprocessing_NBAtlas/h5objects/nb_matrix_NBAtlas.h5',
+  filtered_counts, #mtx
+  barcodes = colnames(filtered_counts),
+  gene.id = rownames(filtered_counts),
+  gene.symbol = rownames(filtered_counts),
+  gene.type = "Gene Expression",
+  overwrite = TRUE,
+  type = c("HDF5"),
+  genome = "unknown",
+  version = c("3"),
+  chemistry = NULL,
+  original.gem.groups = NULL,
+  library.ids = NULL)
+
+```
+
+## Genes
+```{r}
+# original mapping used by HGNChelper for NBAtlas
+head(HGNChelper::hgnc.table)
+saveRDS(HGNChelper::hgnc.table, file = paste0("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/01_Import_Preprocessing_NBAtlas/Tables/HGNChelper_map_",project,".rds"))
+#NBAtlas_map <- read.rds("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/01_Import_Preprocessing_NBAtlas/Tables/HGNChelper_map_NBAtlas.rds")
+#gene.names <- checkGeneSymbols(rownames(seuratObj), unmapped.as.na=FALSE, map = NBAtlas_map)
+# gene.names %>% filter(Approved == FALSE) %>% filter(x != Suggested.Symbol) # 659 genes that need updating
+# gene.names <- gene.names$Suggested.Symbol
+```
+
+
+## Metadata
+### Reload
+```{r}
+nb_meta <- readRDS(paste0(output_Robjects, "01_meta_list_NBAtlas.rds"))
+studies <- c("Dong2020", "Jansky2021", "Kildisiute10X", "Slyper2020_cell", "Slyper2020_nucleus", "Verhoeven2022", "Costa2022")
+```
+
+```{r}
+# Essential metadata: (nCount_RNA, nFeature_RNA,) percent_mito, Study, Platform, Assay, Sample,  Author_Annot
+
+cellnames_all <- c()
+percent_mito_all <- c()
+study_all <- c()
+platform_all <- c()
+assay_all <- c()
+sample_all <- c()
+author_annot_all <- c()
+nCount_RNA_all <- c()
+nFeature_RNA_all <- c()
+
+for (i in 1:length(nb_meta)){
+  print(studies[i])
+  #cellname
+  cellnames_all <- c(cellnames_all, rownames(nb_meta[[i]]))
+  
+  required_columns <- c("percent_mito", "nCount_RNA", "nFeature_RNA", "Sample", "Study", "Platform", "Assay", "Author_Annot")
+  
+  if (! all(required_columns %in% names(nb_meta[[i]]))){
+    print(paste0(required_columns[! required_columns %in% names(nb_meta[[i]]) ] ," missing in ", names(nb_meta)[i]," !!"))
+    break
+  }
+  
+  #nCount_RNA
+  nCount_RNA_all <- c(nCount_RNA_all, nb_meta[[i]]$nCount_RNA)
+  
+  #nFeature_RNA
+  nFeature_RNA_all <- c(nFeature_RNA_all, nb_meta[[i]]$nFeature_RNA)
+  
+  #percent_mito
+  percent_mito_all <- c(percent_mito_all, nb_meta[[i]]$percent_mito)
+  
+  #Study
+  study_all <- c(study_all, nb_meta[[i]]$Study)
+  
+  #Platform
+  platform_all <- c(platform_all, nb_meta[[i]]$Platform)
+  
+  #Assay_all
+  assay_all <- c(assay_all, nb_meta[[i]]$Assay)
+  
+  #Sample
+  sample_all <- c(sample_all, nb_meta[[i]]$Sample)
+  
+  #author annotation
+  author_annot_all <- c(author_annot_all, paste0(nb_meta[[i]]$Author_Annot))
+}
+length(cellnames_all)
+length(percent_mito_all)
+length(study_all)
+length(assay_all)
+length(sample_all)
+length(author_annot_all)
+length(nCount_RNA_all)
+length(nFeature_RNA_all)
+```
+```{r}
+meta_all <- data.frame(Cell = cellnames_all,
+                       nCount_RNA = nCount_RNA_all, 
+                       nFeature_RNA = nFeature_RNA_all,
+                       percent_mito = percent_mito_all, 
+                       Study = study_all,
+                       Assay = assay_all,
+                       Platform = platform_all,
+                       Sample = sample_all, 
+                       Author_Annot = author_annot_all)
+
+meta_all <- meta_all %>% column_to_rownames("Cell")# cells as rownames
+
+meta_all <- meta_all %>% na_if(., "NA") #replace NA with "NA"
+#meta_all %>% lapply(table)
+```
+
+```{r save_metadata_all}
+write.table(meta_all, file = paste0(output_tables, "nb_matrix_metadata.csv"), row.names = T, col.names = T, sep = ",")
+# reload
+#meta_all <- read.csv("01_Import_Preprocessing_NBAtlas/Tables/nb_matrix_metadata.csv", header = T)
+```
+
+
+```{r}
+# unify labels
+meta_all$Author_annot_unified <- meta_all$Author_Annot
+
+meta_all$Author_annot_unified[ meta_all$Author_annot_unified %in% c("Leukocytes","Immune cells")] <- "Immune cell"
+meta_all$Author_annot_unified[ meta_all$Author_annot_unified %in% c("B_cells", "Bcell","B cell") ] <- "B cell"
+meta_all$Author_annot_unified[ meta_all$Author_annot_unified %in% c("Endothelial cells", "Endothelial cell", "Endothelium", "endo", "ECs")] <- "Endothelial"
+meta_all$Author_annot_unified[ meta_all$Author_annot_unified %in% c("fibro", "Mesenchymal cells", "Mesenchyme", "CAFs")] <- "Mesenchymal"
+meta_all$Author_annot_unified[ meta_all$Author_annot_unified %in% c("Tcell", "T_cells", "T cell" )] <- "T cell"
+meta_all$Author_annot_unified[ meta_all$Author_annot_unified %in% c("Tumour cluster 1", "Tumour cluster 2", "Tumour cluster 3", "Tumor cells", "tumor", "NOR", "Neuroendocrine")] <- "NE"
+meta_all$Author_annot_unified[ meta_all$Author_annot_unified %in% c("schwan", "Schwann cells","Neural crest")] <- "Schwann"
+meta_all$Author_annot_unified[ meta_all$Author_annot_unified %in% c("mye")] <-  "Myeloid"
+
+meta_all$Author_annot_unified[ meta_all$Author_annot_unified %in% c("NK", "NK cell")] <- "NK cell"
+
+meta_all$Author_annot_unified[ meta_all$Author_annot_unified %in% c("Macrophages", "Macrophage")] <- "Macrophage"
+#"Monocytes", "Macrophages", "DCs"
+
+meta_all$Author_annot_unified[ meta_all$Author_annot_unified %in% c("Zona glomerulosa") ] <- "Cortex"
+
+meta_all$Author_annot_unified[ meta_all$Author_annot_unified %in% c("Erythrocyte", "Erythrocytes")] <- "RBC"
+```
+
+```{r}
+table(meta_all$Author_annot_unified)
+```
+```{r save_metadata_ext}
+write.table(meta_all, file = paste0(output_tables, "nb_matrix_metadata_ext.csv"), row.names = T, col.names = T, sep = ",")
+# reload
+#meta_all <- read.csv("01_Import_Preprocessing_NBAtlas/Tables/nb_matrix_metadata_ext.csv", header = T)
+```
+
+```{r}
+levels(as.factor(meta_all$Author_annot_unified))
+```
+```{r}
+meta_all$Author_Annot_Harm_L0 <- "not assigned"
+
+meta_all$Author_Annot_Harm_L1[ meta_all$Author_annot_unified %in% c("B cell", )  ] <- ""
+```

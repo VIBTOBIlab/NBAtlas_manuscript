@@ -1,0 +1,115 @@
+---
+title: "03d_post_scVI_CopyKAT_NBAtlas"
+author: "Noah Bonine"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: cosmo
+    highlight: textmate
+    df_print: paged
+    toc: true
+    toc_depth: 2
+params:
+    nCores: x
+    memPerCore: x
+    index1: x
+    indexN: x
+---
+
+index1: first sample index for for-loop (default 1)
+indexN: last sample index for for-loop (default #samples)
+
+```{r}
+suppressPackageStartupMessages({
+  library(copykat)
+  library(dlm)
+  library(Seurat)
+  library(tidyverse)
+  library(future)
+})
+
+options(bitmapType='cairo')
+
+set.seed(123)
+```
+```{r}
+setwd("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03d_post_scVI_CopyKAT_NBAtlas")
+```
+
+```{r}
+params
+```
+
+```{r}
+n.cores <- params$nCores
+memPerCore <- params$memPerCore
+
+options(future.globals.maxSize = memPerCore*1000*1024^2)
+
+index1 <- params$index1
+indexN <- params$indexN
+```
+
+```{r setup_input_data}
+project <- "NBAtlas"
+step <- "04e_post_scVI"
+output_Robjects <- "/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03d_post_scVI_CopyKAT_NBAtlas/Robjects/"
+dir.create(output_Robjects)
+
+seuratObj <- readRDS("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03b_post_scVI_R_NBAtlas/Robjects/03b_post_scVI_scVI_covSample_moreEpochs20230322_seuratObj_NormOnly_NBAtlas.rds")
+metaData <- read.csv("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03c_post_scVI_R_plots/Tables/03c_post_scVI_R_plots_covSample_MetaDataForInferCNV.csv")
+
+table(metaData$annot_NBN_iCNV)
+
+reference_celtypes <- c("B cell","Endothelial","Myeloid","pDC","Plasma","Stromal other","T/NK cell")
+
+cells_keep <- rownames(metaData)[!( metaData$annot_NBN_iCNV %in%"RBCs")]
+
+seuratObj$cellname <- Cells(seuratObj)
+seuratObj <- subset(seuratObj, subset = cellname %in% cells_keep)
+metaData <- metaData[cells_keep,]
+ref_cells_all <- rownames(metaData)[metaData$annot_NBN_iCNV %in% reference_celtypes]
+seurat_obj_list <- SplitObject(seuratObj, "Sample") #split obj per sample
+
+rm(seuratObj)
+gc()
+```
+
+```{r copykat_run, message=F}
+sample_names <- names(seurat_obj_list)
+
+for (i in index1:indexN){
+  sam.name <- sample_names[i]
+  message(paste0("Starting copykat for sample: ", sam.name)) # to command line
+  print(paste0("Starting copykat for sample: ", sam.name)) # to html
+  
+  #subset sample
+  rawmat <- GetAssayData(seurat_obj_list[[i]], slot = "counts")
+  rawmat <- as.matrix(rawmat)
+  
+  metaData <- seurat_obj_list[[i]]@meta.data
+  
+  #check normal cells
+  ref_cells <- ref_cells_all[ref_cells_all %in% Cells(seurat_obj_list[[i]])]
+  print("Number of ref cells: ")
+  print(length(ref_cells))
+  PcntRefCells <- length(ref_cells)/length(Cells(seurat_obj_list[[i]]))*100
+  print("Percentage of ref cells: ")
+  print(PcntRefCells)
+  
+  nTestCells <- length(Cells(seurat_obj_list[[i]])) - length(ref_cells) # test cells
+  print("Number of test cells: ")
+  print(nTestCells)
+  
+  if (length(ref_cells) >= 100){
+    copykat_obj <- copykat(rawmat = rawmat, id.type="S", cell.line="no", ngene.chr=5, LOW.DR=0.05, UP.DR=0.1, win.size=25, KS.cut=0.1, distance="euclidean", n.cores = n.cores, norm.cell.names = ref_cells_all, sam.name = sam.name, plot.genes=F)
+    saveRDS(copykat_obj, file = paste0(output_Robjects, step, "_CopyKAT_", sam.name, "_CopyKAToutput_",project,".rds"))
+    
+  } else{
+    message(paste0("Insufficient reference cells for sample: ", sam.name, " (", length(ref_cells), ")"))
+    print(paste0("Insufficient reference cells for sample: ", sam.name, " (", length(ref_cells), ")"))
+  }
+  rm(rawmat,copykat_obj)
+  gc()
+}
+```

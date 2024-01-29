@@ -1,0 +1,1138 @@
+---
+title: "03c_post_scVI_R_plots"
+author: "Noah Bonine"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(tidyverse)
+  library(plot1cell)
+  library(scales)
+  library(RColorBrewer)
+  library(svglite)
+  library(arrow)
+  library(stringr)
+  library(ggrepel)
+})
+
+options(bitmapType='cairo')
+
+```
+```{r}
+set.seed(123)
+```
+
+```{r}
+setwd("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas")
+```
+```{r}
+output_dir <- "03c_post_scVI_R_plots/"
+
+output_figures <- paste0(output_dir, "Figures/")
+output_tables <- paste0(output_dir, "Tables/")
+output_Robjects <- paste0(output_dir, "Robjects/")
+
+dir_SignaturePlots <- paste0(output_figures, "/SignaturePlots/")
+dir_FeaturePlots <- paste0(output_figures, "/FeaturePlots/")
+
+
+dir.create(output_dir)
+dir.create(output_figures)
+dir.create(output_tables)
+dir.create(output_Robjects)
+
+dir.create(dir_SignaturePlots)
+dir.create(dir_FeaturePlots)
+```
+
+```{r}
+reduction_to_plot <- "scvi_umap"
+step <- "03c_post_scVI_R"
+project <- "NBAtlas"
+```
+
+# Load seuratObj
+```{r}
+#seuratObjFull <- readRDS("03b_post_scVI_R_NBAtlas/Robjects/03b_post_scVI_scVI_covSample_moreEpochs20230322_seuratObj_NBAtlas.rds")
+#seuratObj
+
+#lightweight
+seuratObj <- readRDS("03b_post_scVI_R_NBAtlas/Robjects/03b_post_scVI_scVI_covSample_moreEpochs20230322_seuratObj_NormOnly_NBAtlas.rds")
+
+# share obj
+# seuratObj <- readRDS("03c_post_scVI_R_plots/Robjects/seuratObj_NBAtlas_share_20230525.rds")
+```
+
+```{r}
+Study_colors <- brewer.pal(n = length(levels(as.factor(seuratObj$Study))), name = "Dark2")
+assay_colors <- c("steelblue","goldenrod1")
+Sample_colors <- readRDS("03c_post_scVI_R_plots/Robjects/UMAP_Sample_colors_v1.rds")
+```
+
+# No integration
+
+## Scanpy
+```{r}
+umap_no_int <- read.csv("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03a_scVI_NBAtlas/Tables/nb_adata_b_NoInt_umap_coordinates_NBAtlas.csv")
+rownames(umap_no_int) <- umap_no_int$cell_name
+umap_no_int$cell_name <- NULL
+umap_no_int <- as.matrix(umap_no_int)
+umap_no_int_red <- CreateDimReducObject(embeddings = umap_no_int, key = 'umap_No_Int', assay = 'RNA')
+
+seuratObj[["umap_NoInt"]] <- umap_no_int_red
+```
+
+
+```{r}
+DimPlot(seuratObj, reduction = "umap_NoInt")
+
+DimPlot(seuratObj, reduction = "umap_NoInt", group.by = "Study", raster = F) + scale_color_manual(values = Study_colors)
+ggsave(paste0(output_figures, step, "_ScanpyNaiveUMAP_ColPerStudy_plot1cellColors_", project, ".png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = "umap_NoInt", group.by = "Assay", raster = F) + scale_color_manual(values = assay_colors)
+ggsave(paste0(output_figures, step, "_ScanpyNaiveUMAP_ColPerAssay_AssayColors_", project, ".png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = "umap_NoInt", group.by = "Sample", raster = F) + scale_color_manual(values = Sample_colors) & NoLegend()
+ggsave(paste0(output_figures, step, "_ScanpyNaiveUMAP_ColPerSample_SampleColors_", project, ".png"), width = 7, height = 7)
+```
+
+# Plots
+```{r}
+DimPlot(seuratObj, reduction = "scvi_umap", raster = F) + scale_color_manual(values = "gray")
+ggsave(paste0(output_figures, step, "_UMAP_ReferenceAtlas_gray_", project, ".png"), width = 9, height = 7, dpi = 500)
+
+DimPlot(seuratObj, reduction = "scvi_umap", raster = F) + scale_color_manual(values = "gray90")
+ggsave(paste0(output_figures, step, "_UMAP_ReferenceAtlas_gray90_", project, ".png"), width = 9, height = 7, dpi = 500)
+```
+
+
+```{r}
+# Col per study
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "Study")
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerStudy_raster_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "Study", raster = FALSE)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerStudy_NBAtlas.png"), width = 9, height = 7)
+
+# Col per platform
+table(seuratObj$Platform) # check whether updated: 10X_v2: 245080, 10X_v3: 117911
+platform_colors <- c("darkolivegreen","deeppink2")
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "Platform", raster = FALSE) + scale_color_manual(values = platform_colors)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerPlatform_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "Platform", raster = FALSE, shuffle = T) + scale_color_manual(values = platform_colors)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerPlatform_Shuffeled_NBAtlas.png"), width = 9, height = 7)
+```
+```{r}
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "leiden_scVI_res1", label = T)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerLeidenClustRes1_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "leiden_scVI_res1.5", label = T)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerLeidenClustRes1p5_NBAtlas.png"), width = 9, height = 7)
+```
+
+```{r}
+# highlight leiden cluster
+# res 1
+SeuClusters <- levels(seuratObj$leiden_scVI_res1)
+
+i <- 0
+for (Cluster in SeuClusters){
+  i <- i + 1
+  cells_higlight <- Cells(seuratObj)[seuratObj$leiden_scVI_res1 %in% Cluster]
+  titel <- paste0("Cluster ",Cluster)
+  if ( Cluster == "0"  ){
+    p <- DimPlot(seuratObj, cells.highlight = cells_higlight)
+  } else {
+    p <- p + DimPlot(seuratObj, cells.highlight = cells_higlight)
+  }
+  p[[i]] <- p[[i]] + ggtitle(paste0("Cluster ", Cluster)) + scale_color_manual(values = c("gray",hue_pal()(length(SeuClusters))[i]))  # workaround to add plot title to each subplot
+}
+p <- p & NoLegend()
+
+ggsave(p, filename = paste0(output_figures, "03c_post_scVI_R_plots_covSample_HighlightLeidenClustRes1_NBAtlas.png"), width = 25, height = 25)
+
+# res 1.5
+SeuClusters <- levels(seuratObj$leiden_scVI_res1.5)
+
+i <- 0
+for (Cluster in SeuClusters){
+  i <- i + 1
+  cells_higlight <- Cells(seuratObj)[seuratObj$leiden_scVI_res1.5 %in% Cluster]
+  titel <- paste0("Cluster ",Cluster)
+  if ( Cluster == "0"  ){
+    p <- DimPlot(seuratObj, cells.highlight = cells_higlight)
+  } else {
+    p <- p + DimPlot(seuratObj, cells.highlight = cells_higlight)
+  }
+  p[[i]] <- p[[i]] + ggtitle(paste0("Cluster ", Cluster)) + scale_color_manual(values = c("gray",hue_pal()(length(SeuClusters))[i]))  # workaround to add plot title to each subplot
+}
+p <- p & NoLegend()
+
+ggsave(p, filename = paste0(output_figures, "03c_post_scVI_R_plots_covSample_HighlightLeidenClustRes1p5_NBAtlas.png"), width = 25, height = 25)
+```
+
+```{r}
+# highlight Sample
+sample_levels <- levels(as.factor(seuratObj$Sample))
+
+Sample_colors <- readRDS("03c_post_scVI_R_plots/Robjects/UMAP_Sample_colors_v1.rds")
+
+i <- 0
+for (Sample in sample_levels){
+  i <- i + 1
+  cells_higlight <- Cells(seuratObj)[seuratObj$Sample %in% Sample]
+  titel <- Sample
+  if ( i == 1  ){
+    p <- DimPlot(seuratObj, cells.highlight = cells_higlight, raster = F) & NoAxes() & NoLegend() 
+  } else {
+    p <- p + DimPlot(seuratObj, cells.highlight = cells_higlight, raster = F) & NoAxes() & NoLegend()
+  }
+  p[[i]] <- p[[i]] + ggtitle(Sample) + scale_color_manual(values = c("gray90",Sample_colors[i])) + theme(plot.title = element_text(size = 8)) # workaround to add plot title to each subplot
+}
+p <- p & NoLegend()
+
+ggsave(p, filename = paste0(output_figures, "03c_post_scVI_R_plots_covSample_HighlightSample_v3_NBAtlas.png"), width = 25, height = 25, dpi = 700)
+```
+
+```{r}
+# Split plots
+meta <- "Study"
+SeuratSplitPlotMeta(seuratObj, meta = meta, reduction_to_plot = "scvi_umap", colors = Study_colors)
+ggsave(filename = paste0(step, "_UMAP_Highlight_",meta,"_NBAtlas.png"), path = output_figures, width = 15, height = 15)
+
+meta <- "Assay"
+SeuratSplitPlotMeta(seuratObj, meta = meta, reduction_to_plot = "scvi_umap", colors = assay_colors)
+ggsave(filename = paste0(step, "_UMAP_Highlight_",meta,"_NBAtlas.png"), path = output_figures, width = 15, height = 7)
+
+meta <- "Sample"
+SeuratSplitPlotMeta(seuratObj, meta = meta, reduction_to_plot = "scvi_umap", colors = Sample_colors)
+ggsave(filename = paste0(step, "_UMAP_Highlight_",meta,"_NBAtlas.png"), path = output_figures, width = 30, height = 30)
+```
+
+## Cell cycle
+```{r}
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+
+seuratObj <- CellCycleScoring(seuratObj, s.features = s.genes, g2m.features = g2m.genes)
+```
+
+```{r}
+DimPlot(seuratObj, group.by = "Phase", reduction = reduction_to_plot)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_CellCycle_NBAtlas.png"), width = 9, height = 7)
+DimPlot(seuratObj, group.by = "Phase", reduction = reduction_to_plot, raster = F, pt.size = 0.1)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_CellCycle_HD_NBAtlas.png"), width = 15, height = 12)
+DimPlot(seuratObj, group.by = "Phase", reduction = reduction_to_plot, shuffle = T)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_CellCycle_Shuffled_NBAtlas.png"), width = 9, height = 7)
+DimPlot(seuratObj, group.by = "Phase", reduction = reduction_to_plot, shuffle = T, raster = F, pt.size = 0.1)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_CellCycle_Shuffled_HD_NBAtlas.png"), width = 15, height = 12)
+```
+
+
+## Markers
+```{r}
+# Some canonical markers  
+for (marker in c("PHOX2B","MYCN","ALAS2","CDH19","PDGFRB","ENG","PTPRC","CD3D","KLRF1","CD79A","LILRA4","IGHG1","CD68")){
+  FeaturePlot(seuratObj, features = marker, min.cutoff = "q2", max.cutoff = "q98", reduction = reduction_to_plot, order = TRUE)
+  ggsave(paste0(dir_FeaturePlots, "03c_post_scVI_R_plots_covSample_", marker, "_NBAtlas.png"), width = 9, height = 7)
+}  
+``` 
+
+```{r}
+# other markers:
+for (marker in c("ALB","AFP","CYP3A4","CYP2E1","CFTR","DCDC2","ITGB8")){
+  FeaturePlot(seuratObj, features = marker, min.cutoff = "q2", max.cutoff = "q98", reduction = reduction_to_plot, order = TRUE)
+  ggsave(paste0(dir_FeaturePlots, "03c_post_scVI_R_plots_covSample_", marker, "_NBAtlas.png"), width = 9, height = 7)
+}
+```
+
+# Annotate for inferCNV
+```{r}
+seuratObj$annot_NBN_iCNV <- "not assigned"
+
+#immune ref
+seuratObj$annot_NBN_iCNV[ seuratObj$leiden_scVI_res1.5 %in% c('8','11','25','32','34','5','26','27','18')] <- "T/NK cell"
+seuratObj$annot_NBN_iCNV[ seuratObj$leiden_scVI_res1.5 %in% c('16')] <- "B cell"
+seuratObj$annot_NBN_iCNV[ seuratObj$leiden_scVI_res1.5 %in% c('31')] <- 'Plasma'
+seuratObj$annot_NBN_iCNV[ seuratObj$leiden_scVI_res1.5 %in% c('28')] <- 'pDC'
+seuratObj$annot_NBN_iCNV[ seuratObj$leiden_scVI_res1.5 %in% c('36','35','10','21')] <- 'Myeloid'
+
+# non-immune ref
+seuratObj$annot_NBN_iCNV[ seuratObj$leiden_scVI_res1.5 %in% c('17')] <- 'Endothelial'
+seuratObj$annot_NBN_iCNV[ seuratObj$leiden_scVI_res1.5 %in% c('22')] <- 'Stromal other' # cortex & liver cells
+
+# to test
+seuratObj$annot_NBN_iCNV[ seuratObj$leiden_scVI_res1.5 %in% c('33')] <- 'RBCs'
+seuratObj$annot_NBN_iCNV[ seuratObj$leiden_scVI_res1.5 %in% c('15')] <- 'Fibroblast'
+seuratObj$annot_NBN_iCNV[ seuratObj$leiden_scVI_res1.5 %in% c('23')] <- 'Schwann'
+seuratObj$annot_NBN_iCNV[ seuratObj$leiden_scVI_res1.5 %in% c('12','2','30','24','20','13','14','7','29','0','37','4','19','6','3','9','1')  ] <- "NE"
+
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "annot_NBN_iCNV", label = T)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_AnnotationForInferCNV_NBAtlas.png"), width = 9, height = 7)
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "annot_NBN_iCNV")
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_AnnotationForInferCNV_NoLabel_NBAtlas.png"), width = 9, height = 7)
+```
+
+
+```{r}
+# save metadata for inferCNV
+write.table(seuratObj@meta.data, file = paste0(output_tables, '03c_post_scVI_R_plots_covSample_MetaDataForInferCNV.csv'), row.names = T, col.names = T, sep = ",")
+```
+
+# scArches annotation
+## Annotate
+```{r}
+seuratObj$annot_NBN_scarches <- "not assigned"
+
+seuratObj$scviUMAP_1 <- Embeddings(seuratObj, reduction = "scvi_umap")[,1]
+seuratObj$scviUMAP_2 <- Embeddings(seuratObj, reduction = "scvi_umap")[,2]
+
+seuratObj$annot_NBN_scarches[ seuratObj$leiden_scVI_res1.5 %in% c('8','11','25','32','34','5','26','27')] <- "T cell"
+seuratObj$annot_NBN_scarches[ seuratObj$leiden_scVI_res1.5 %in% c('18')] <- "NK cell"
+seuratObj$annot_NBN_scarches[ seuratObj$leiden_scVI_res1.5 %in% c('31')] <- 'Plasma'
+seuratObj$annot_NBN_scarches[ seuratObj$leiden_scVI_res1.5 %in% c('16')] <- "B cell"
+seuratObj$annot_NBN_scarches[ seuratObj$leiden_scVI_res1.5 %in% c('28')] <- 'pDC'
+seuratObj$annot_NBN_scarches[ seuratObj$leiden_scVI_res1.5 %in% c('36','35','10','21')] <- 'Myeloid'
+seuratObj$annot_NBN_scarches[ seuratObj$leiden_scVI_res1.5 %in% c('17')] <- 'Endothelial'
+seuratObj$annot_NBN_scarches[ seuratObj$leiden_scVI_res1.5 %in% c('22')] <- 'Stromal other' # cortex & liver cells
+seuratObj$annot_NBN_scarches[ seuratObj$leiden_scVI_res1.5 %in% c('33')] <- 'RBCs' #exclude                          
+seuratObj$annot_NBN_scarches[ seuratObj$leiden_scVI_res1.5 %in% c('15')] <- 'Fibroblast'
+seuratObj$annot_NBN_scarches[ seuratObj$leiden_scVI_res1.5 %in% c('23')] <- 'Schwann'
+seuratObj$annot_NBN_scarches[ seuratObj$leiden_scVI_res1.5 %in% c('12','2','30','24','20','13','14','7','29','0','37','4','19','6','3','9','1')  ] <- "NE"
+seuratObj$annot_NBN_scarches[ seuratObj$leiden_scVI_res1 %in% c('14')] <- "B cell" # adjust take leiden clustering res1 (better clustering of B cell)
+
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "annot_NBN_scarches", label = T)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_AnnotationForscArches_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "annot_NBN_scarches")
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_AnnotationForscArches_NoLabel_NBAtlas.png"), width = 9, height = 7)
+```
+
+### save
+```{r}
+saveRDS(seuratObj@meta.data, "/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03c_post_scVI_R_plots/Robjects/03c_post_scVI_R_plots_covSample_MetaData_AnnotationForscArches.rds")
+
+write.table(seuratObj@meta.data, file = paste0("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03c_post_scVI_R_plots/Tables/03c_post_scVI_R_plots_covSample_MetaData_AnnotationForscArches.csv"), row.names = T, col.names = T, sep = ",")
+```
+
+### reload
+```{r}
+MetaData_AnnotationForscArches <- readRDS("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03c_post_scVI_R_plots/Robjects/03c_post_scVI_R_plots_covSample_MetaData_AnnotationForscArches.rds")
+seuratObj$annot_NBN_scarches <- MetaData_AnnotationForscArches$annot_NBN_scarches
+```
+
+
+### UMAPs with metadata (plot1cell colors)
+```{r}
+cluster_colors <- hue_pal()(length(levels(as.factor(seuratObj$annot_NBN_scarches))))
+```
+
+
+```{r}
+Study_colors <- brewer.pal(n = length(levels(as.factor(seuratObj$Study))), name = "Dark2")
+
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "Study") + scale_color_manual(values = Study_colors)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerStudy_plot1cellColors_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "Study", raster = FALSE) + scale_color_manual(values = Study_colors)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerStudy_plot1cellColors_HD_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "Study", raster = FALSE) + scale_color_manual(values = Study_colors) & NoLegend()
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerStudy_plot1cellColors_HD_NoLegend_NBAtlas.png"), width = 9, height = 9)
+```
+```{r}
+assay_colors <- c("steelblue","goldenrod1")
+
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "Assay") + scale_color_manual(values = assay_colors)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerAssay_plot1cellColors_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "Assay", raster = FALSE) + scale_color_manual(values = assay_colors)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerAssay_plot1cellColors_HD_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "Assay", raster = FALSE) + scale_color_manual(values = assay_colors) & NoLegend()
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerAssay_plot1cellColors_HD_NoLegend_NBAtlas.png"), width = 9, height = 9)
+```
+
+```{r}
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "Assay") + scale_color_manual(values = assay_colors)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerAssay_plot1cellColors_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "Assay", raster = FALSE) + scale_color_manual(values = assay_colors)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerAssay_plot1cellColors_HD_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "Assay", raster = FALSE) + scale_color_manual(values = assay_colors) & NoLegend()
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerAssay_plot1cellColors_HD_NoLegend_NBAtlas.png"), width = 9, height = 9)
+
+# Highlight assay
+selection <- Cells(seuratObj)[ seuratObj$Assay %in% "single-cell"] # e.g.  
+DimPlot(seuratObj, cells.highlight = selection) + scale_color_manual(values = c("gray",assay_colors[1]), labels = c("Unselected","single-cell"))  
+```
+
+
+```{r}
+Sample_colors <- readRDS(paste0(output_Robjects, "UMAP_Sample_colors_v1.rds"))
+
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "Sample") + scale_color_manual(values = Sample_colors) & NoLegend()
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerSample_plot1cellColors_NoLegend_NBAtlas.png"), width = 7, height = 7)
+
+DimPlot(seuratObj, reduction = "scvi_umap", group.by = "Sample", raster = FALSE) + scale_color_manual(values = Sample_colors) & NoLegend()
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerSample_plot1cellColors_HD_NoLegend_NBAtlas.png"), width = 9, height = 9)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_ColPerSample_plot1cellColors_UHD_NoLegend_NBAtlas.png"), width = 11, height = 11, dpi = 500)
+
+```
+
+## Barplot Study per annotation
+```{r}
+percent_data <- seuratObj@meta.data[c("annot_NBN_scarches", "Study")] %>%
+  group_by(annot_NBN_scarches, Study) %>%
+  summarize(count = n()) %>%
+  mutate(percent = count/sum(count))
+
+ggplot(percent_data, aes(x = annot_NBN_scarches, y = percent, fill = Study)) +
+  geom_col(position = "fill") + scale_y_continuous(labels = percent_format()) + scale_fill_manual(name = "Study", values = Study_colors) + theme_bar +
+  labs(y = "Percentage")
+
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_AnnotationForscArches_BarPlot_StudyPerAnnotation_NBAtlas.png"), width = 7, height = 5)
+```
+
+## Barplot Assay per annotation
+```{r}
+percent_data <- seuratObj@meta.data[c("annot_NBN_scarches", "Assay")] %>%
+  group_by(annot_NBN_scarches, Assay) %>%
+  summarize(count = n()) %>%
+  mutate(percent = count/sum(count))
+
+ggplot(percent_data, aes(x = annot_NBN_scarches, y = percent, fill = Assay)) +
+  geom_col(position = "fill") + scale_y_continuous(labels = percent_format()) + scale_fill_manual(name = "Assay", values = assay_colors) + theme_bar +
+  labs(y = "Percentage")
+
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_AnnotationForscArches_BarPlot_AssayPerAnnotation_NBAtlas.png"), width = 7, height = 5)
+```
+
+## Barplot Sample per annotation
+```{r}
+percent_data <- seuratObj@meta.data[c("annot_NBN_scarches", "Sample")] %>%
+  group_by(annot_NBN_scarches, Sample) %>%
+  summarize(count = n()) %>%
+  mutate(percent = count/sum(count))
+
+ggplot(percent_data, aes(x = annot_NBN_scarches, y = percent, fill = Sample)) +
+  geom_col(position = "fill") + scale_y_continuous(labels = percent_format()) + scale_fill_manual(name = "Sample", values = Sample_colors) + theme_bar +
+  labs(y = "Percentage")
+
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_AnnotationForscArches_BarPlot_SamplePerAnnotation_NBAtlas.png"), width = 15, height = 7)
+```
+
+## Barplot Annotation per Sample
+```{r}
+percent_data <- seuratObj@meta.data[c("annot_NBN_scarches", "Sample")] %>%
+  group_by(annot_NBN_scarches, Sample) %>%
+  summarize(count = n()) %>%
+  mutate(percent = count/sum(count))
+
+ggplot(percent_data, aes(x = Sample, y = percent, fill = annot_NBN_scarches)) +
+  geom_col(position = "fill") + scale_y_continuous(labels = percent_format()) + theme_bar +
+  labs(y = "Percentage")
+
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_AnnotationForscArches_BarPlot_AnnotationPerSample_NBAtlas.png"), width = 15, height = 7)
+```
+
+
+### Plot1cell
+```{r}
+#v3: change NE to Neuroendocrine
+#prepare seuratObj
+seuratObj$annot_NBN_scarches_v3 <- seuratObj$annot_NBN_scarches
+seuratObj$annot_NBN_scarches_v3[seuratObj$annot_NBN_scarches_v3 %in% "NE" ] <- "Neuroendocrine"
+
+Idents(seuratObj) <- seuratObj$annot_NBN_scarches_v3 # essential for plot1cell (otherwise duplicate error)
+# adapt functions to get different reduction than default "umap"
+scale <- 0.78 #Zoom scale UMAP (lower > more zoomed out )
+#metaData <- get_metadata(seuratObj, reductions = "scvi_umap", coord_scale = scale, color = )
+  
+# prepare_circlize_data adapted (add: reductions = "scvi_umap":
+celltypes <- levels(seuratObj)
+cell_colors <- scales::hue_pal()(length(celltypes))
+#data_plot <- get_metadata(seu_obj, color = cell_colors, coord_scale = scale)
+data_plot <- get_metadata(seuratObj, color = cell_colors, coord_scale = scale, reductions = "scvi_umap")
+data_plot <- cell_order(data_plot)
+data_plot$x_polar2 <- log10(data_plot$x_polar)
+
+# only umap
+png(filename =  paste0(output_figures, "03c_post_scVI_R_plots_covSample_AnnotationForscArches_plot1cell_modified_v3_NoRings_NBAtlas.png"), width = 6, height = 6,units = 'in', res = 300)
+plot_circlize_NBN(data_plot = data_plot, do.label = T, pt.size = 0.02, col.use = cluster_colors, bg.color = 'white', kde2d.n = 200, repel = T, label.cex = 0.8, contour.levels = c(0.2, 0.3), add_track = FALSE)
+dev.off()
+
+png(filename =  paste0(output_figures, "03c_post_scVI_R_plots_covSample_AnnotationForscArches_plot1cell_modified_v3_NoRings_500dpi_NBAtlas.png"), width = 6, height = 6,units = 'in', res = 500)
+plot_circlize_NBN(data_plot = data_plot, do.label = T, pt.size = 0.02, col.use = cluster_colors, bg.color = 'white', kde2d.n = 200, repel = T, label.cex = 0.8, contour.levels = c(0.2, 0.3), add_track = FALSE)
+dev.off()
+
+png(filename =  paste0(output_figures, "03c_post_scVI_R_plots_covSample_AnnotationForscArches_plot1cell_modified_v3_NoRings_1000dpi_NBAtlas.png"), width = 6, height = 6,units = 'in', res = 1000)
+plot_circlize_NBN(data_plot = data_plot, do.label = T, pt.size = 0.02, col.use = cluster_colors, bg.color = 'white', kde2d.n = 200, repel = T, label.cex = 0.8, contour.levels = c(0.2, 0.3), add_track = FALSE)
+dev.off()
+
+# only rings
+pdf(file =  paste0(output_figures, "03c_post_scVI_R_plots_covSample_AnnotationForscArches_plot1cell_modified_v3_OnlyRings_NBAtlas.pdf"), width = 6, height = 6)
+plot_circlize_NBN(data_plot = data_plot, do.label = T, pt.size = 0.02, col.use = cluster_colors, bg.color = 'white', kde2d.n = 200, repel = T, label.cex = 0.8, contour.levels = c(0.2, 0.3), plot_umap = FALSE)
+add_track_NBN(data_plot = data_plot, group = "Study", colors = Study_colors_matplotlib, track_num = 2)
+add_track_NBN(data_plot = data_plot, group = "Assay", colors = assay_colors, track_num = 3)
+add_track_NBN(data_plot = data_plot, group = "Sample", colors = Sample_colors, track_num = 4)
+dev.off()
+
+# all
+png(filename =  paste0(output_figures, "03c_post_scVI_R_plots_covSample_AnnotationForscArches_plot1cell_modified_v3_NBAtlas.png"), width = 6, height = 6, units = 'in', res = 300)
+plot_circlize_NBN(data_plot = data_plot, do.label = T, pt.size = 0.02, col.use = cluster_colors, bg.color = 'white', kde2d.n = 200, repel = T, label.cex = 0.8, contour.levels = c(0.2, 0.3))
+add_track_NBN(data_plot = data_plot, group = "Study", colors = Study_colors_matplotlib, track_num = 2)
+add_track_NBN(data_plot = data_plot, group = "Assay", colors = assay_colors, track_num = 3)
+add_track_NBN(data_plot = data_plot, group = "Sample", colors = Sample_colors, track_num = 4)
+dev.off()
+```
+
+
+## NE cells sc vs sn
+```{r}
+# NE cells per sample
+NE_cells_per_Sample <- seuratObj@meta.data %>%
+  group_by(Sample, Study, Assay, annot_NBN_scarches) %>%   summarize(count = n()) %>%
+  complete(annot_NBN_scarches, fill = list(count = 0)) %>% #also add 0 if count is zero
+  mutate(percent = count / sum(count) * 100) %>%   filter(annot_NBN_scarches == "NE")
+
+head(NE_cells_per_Sample)
+
+ggplot(NE_cells_per_Sample, aes(x = Assay, y = percent, color = Study)) + geom_boxplot() + labs(y = "Neuroendocrine cells (%)") + theme_celine
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_NEcells_vs_Assay_Jitter_NBAtlas.png"), width = 5, height = 7)
+
+ggplot(NE_cells_per_Sample, aes(x = Assay, y = percent, color = Study)) + geom_boxplot() + labs(y = "Neuroendocrine cells (%)") + theme_celine
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_NEcells_vs_Assay_BoxplotPerStudy_NBAtlas.png"), width = 5, height = 7)
+
+ggplot(NE_cells_per_Sample, aes(x = Assay, y = percent)) + geom_boxplot(outlier.shape = NA) + geom_jitter(width = 0.2, height = 0, aes(color = Study)) + labs(y = "Neuroendocrine cells (%)") + theme_bar_straight
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_NEcells_vs_Assay_Boxplot_NBAtlas.png"), width = 5, height = 5)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_NEcells_vs_Assay_Boxplot_NBAtlas.svg"), width = 5, height = 5)
+
+ggplot(NE_cells_per_Sample, aes(x = Assay, y = percent)) + geom_boxplot(outlier.shape = NA) + geom_jitter(width = 0.1, height = 0) + labs(y = "Neuroendocrine cells (%)") + theme_bar_straight
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_NEcells_vs_Assay_Boxplot_Black_NBAtlas.png"), width = 5, height = 5)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_NEcells_vs_Assay_Boxplot_Black_NBAtlas.svg"), width = 5, height = 5)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_NEcells_vs_Assay_Boxplot_Black_9x4_NBAtlas.svg"), width = 4, height = 9)
+
+ggplot(NE_cells_per_Sample, aes(x = Assay, y = percent)) + geom_boxplot(aes(color = Assay), outlier.shape = NA, show.legend = FALSE) + geom_jitter(width = 0.1, height = 0) + labs(y = "Neuroendocrine cells (%)") + theme_bar_straight + scale_color_manual(values = assay_colors)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_NEcells_vs_Assay_Boxplot_AssayColorsBox_NBAtlas.png"), width = 5, height = 5)
+
+ggplot(NE_cells_per_Sample, aes(x = Assay, y = percent)) + geom_boxplot( outlier.shape = NA) + geom_jitter(aes(color = Assay), width = 0.1, height = 0, show.legend = FALSE) + labs(y = "Neuroendocrine cells (%)") + theme_bar_straight + scale_color_manual(values = assay_colors)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_NEcells_vs_Assay_Boxplot_AssayColorsPoints_NBAtlas.png"), width = 5, height = 5)
+```
+
+```{r}
+NE_cells_per_Sample
+wilcox.test(x = NE_cells_per_Sample$percent[NE_cells_per_Sample$Assay == "single-cell"], y = NE_cells_per_Sample$percent[NE_cells_per_Sample$Assay == "single-nucleus"], alternative = "less") # 1.75e-05
+```
+
+```{r}
+# at timepoints
+NE_cells_per_Sample <- seuratObj@meta.data %>%
+  group_by(Sample, Study, Assay, Timepoint, annot_NBN_scarches) %>%   summarize(count = n()) %>%
+  complete(annot_NBN_scarches, fill = list(count = 0)) %>% #also add 0 if count is zero
+  mutate(percent = count / sum(count) * 100) %>%  filter(annot_NBN_scarches == "NE")
+head(NE_cells_per_Sample)
+
+ggplot(NE_cells_per_Sample, aes(x = Assay, y = percent)) + geom_boxplot() + facet_wrap(~Timepoint) + labs(y = "Neuroendocrine cells (%)") + theme_celine
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_NEcells_vs_Assay_FacetTimepoint_", project, ".svg"), width = 7, height = 10)
+
+ggplot(NE_cells_per_Sample, aes(x = Assay, y = percent)) + geom_boxplot(outlier.shape = NA, show.legend = FALSE) + facet_wrap(~Timepoint) + geom_jitter(aes(color = Assay), width = 0.1, height = 0) + labs(y = "Neuroendocrine cells (%)") + theme_bar_straight + scale_color_manual(values = assay_colors)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_NEcells_vs_Assay_FacetTimepoint_PointAssayColor_", project, ".svg"), width = 7, height = 9)
+
+NE_cells_per_Sample$Timepoint <- factor(as.character(NE_cells_per_Sample$Timepoint), levels = c("pre-treatment", "post-treatment", "relapse", "unknown"))
+NE_cells_per_Sample %>% filter(Timepoint != "unknown") %>% ggplot(aes(x = Timepoint, y = percent, color = Assay)) + geom_boxplot(outlier.shape = NA, show.legend = FALSE) + geom_jitter(position = position_jitterdodge()) + labs(y = "Neuroendocrine cells (%)") + theme_point + scale_color_manual(values = assay_colors)
+ggsave(paste0(output_figures, "03c_post_scVI_R_plots_covSample_NEcells_vs_Timepoint_ColoredPerAssay_AssayColor_", project, ".svg"), width = 7, height = 7)
+```
+
+
+## Celltype DEGs
+See `03g_post_scVI_CellTypeDEGs_NBAtlas.Rmd`
+
+```{r}
+# Reload FindCellTypeMarkers_results
+FindCellTypeMarkers_results <- readRDS("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/03g_post_scVI_CellTypeDEGs_NBAtlas/Robjects/03g_post_scVI_CellTypeDEGs_FindCellTypeMarkers_annot_NBN_scarches_NBAtlas.rds")
+
+annot_column <- "annot_NBN_scarches"
+celltypes_factor <- factor(seuratObj@meta.data[,annot_column])
+celltypes_levels <- levels(celltypes_factor)
+
+# select top genes for dotplot
+top_genes_dotplot <- list()
+
+nTopGenes <- 5 
+for( i in 1:length(FindCellTypeMarkers_results)){
+  table <- FindCellTypeMarkers_results[[i]]
+  top_genes <- table$gene[ table$avg_log2FC > 0] #select pos
+  top_genes_dotplot[[ celltypes_levels[i] ]] <- top_genes[1:nTopGenes] #take nTopGenes/2 genes for dotplot
+  # make unique
+}
+DotPlot(seuratObj, features = unique(unlist(top_genes_dotplot)), group.by = "annot_NBN_scarches") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+ggsave(filename = paste0(output_figures, step, "_DotPlot_Top_", nTopGenes, "Genes_", project, ".png"), width = 15, height = 10)
+
+# subset evenly
+cells_subset <- c()
+nCells_per_ident <- 2000
+
+for (celltype in celltypes_levels){
+  celltype_labels <- Cells(seuratObj)[ seuratObj@meta.data[,annot_column] %in% celltype]
+  if (length(celltype_labels) < nCells_per_ident){ 
+    cells_subset <- c(cells_subset, celltype_labels) # take all
+  } else{
+    cells_subset <- c(cells_subset, sample(x = celltype_labels, size = nCells_per_ident)) # subset 2000 of celltype
+  }
+}
+length(celltypes_levels)*2000 # max number of cells
+length(cells_subset) #20213
+
+seurat_subset <- subset(seuratObj, cells = cells_subset)
+table(seurat_subset$annot_NBN_scarches)
+
+# Scale data for heatmap (and dotplot)
+#seuratObj <- ScaleData(seuratObj) #Error: cannot allocate vector of size 114.7 Gb. Scaled data not sparse.
+seurat_subset <- NormalizeData(seurat_subset, normalization.method = "LogNormalize")
+seurat_subset <- ScaleData(seurat_subset) #7.5 GB
+
+top_genes_heatmap <- list()
+nTopGenes <- 10 
+for( i in 1:length(FindCellTypeMarkers_results)){
+  table <- FindCellTypeMarkers_results[[i]]
+  top_genes <- table$gene[ table$avg_log2FC > 0] #select pos
+  #use subset
+  top_genes <- top_genes[top_genes %in% rownames(seurat_subset@assays$RNA@scale.data)] # select those in @scale.data (for heatmap)
+  top_genes <- top_genes[1:nTopGenes]
+  top_genes_heatmap[[ celltypes_levels[i] ]] <- top_genes
+}
+
+#subset heatmap
+DoHeatmap(seurat_subset, features = unlist(top_genes_heatmap), group.by = annot_column) + scale_fill_gradient2( low = rev(c('#d1e5f0','#67a9cf','#2166ac')), mid = "white", high = rev(c('#b2182b','#ef8a62','#fddbc7')), midpoint = 0, guide = "colourbar", aesthetics = "fill")
+
+ggsave(filename = paste0(output_figures, step, "_HeatmapSubset_", nCells_per_ident, "PerCelltype_Top_", nTopGenes, "Genes_", project, ".png"), width = 15, height = 14) #done: top10 subset 2000/celltype
+```
+
+```{r}
+# Dotplot 3 markers per cell type
+markers <- c("PHOX2B","NXPH1","SYT1", #NE
+             "EGFL7", "EMCN", "PLVAP", # endothelial cells, 
+             "CDH19", "PLP1", "PTPRZ1", # Schwann
+             "COL1A1", "COL1A2", "COL3A1", # fibroblasts
+             "CD3D", "CD3E", "CD2", #T cells
+             "KLRF1", "KLRC1", "XCL2", #NK cells
+             "MS4A1", "CD79A", "VPREB3", #B cells 
+              "IGHG1", "IGHG2", "IGHG3", #plasma cells, 
+              "LYZ", "IL1B", "C1QC", #myeloid cells 
+             "LILRA4", "SCT", "PTCRA", #plasmacytoid dendritic cells 
+             "HBA1", "HBA2", "HBB", #red blood cells
+             "CYP11B1", "CYP21A2", "FAM166B"
+) 
+#levels(as.factor(seuratObj$annot_NBN_scarches))
+seuratObj$annot_NBN_scarches_f <- factor(as.factor(seuratObj$annot_NBN_scarches), levels = c("NE", "Endothelial", "Schwann", "Fibroblast", "T cell", "NK cell", "B cell",  "Plasma", "Myeloid", "pDC", "RBCs", "Stromal other")) 
+seuratObj$annot_NBN_scarches_f_rev <- factor(as.factor(seuratObj$annot_NBN_scarches), levels = rev(c("NE", "Endothelial", "Schwann", "Fibroblast", "T cell", "NK cell", "B cell",  "Plasma", "Myeloid", "pDC", "RBCs", "Stromal other"))) 
+
+DotPlot(seuratObj, features = markers, group.by = "annot_NBN_scarches_f_rev") + blue_red_color_scaleg2 & RotatedAxis()
+ggsave(paste0(output_figures, step, "_DotPlot_TopMarkers_v3_", project, ".svg"), width = 15, height = 5)
+ggsave(paste0(output_figures, step, "_DotPlot_TopMarkers_v3_12x4_", project, ".svg"), width = 12, height = 4)
+```
+
+# UCell
+```{r}
+# Ucell precompute
+ranks <- StoreRankings_UCell(seuratObj@assays[["RNA"]]@counts, force.gc = T) #50 min #raw data ok because based on gene ranking (ranking preserved after log-norm)
+saveRDS(ranks, file = paste0(output_Robjects, step, "_UCellPreCompRanks_", project, ".rds"))
+```
+
+```{r}
+#reload
+ranks <- readRDS(paste0(output_Robjects, step, "_UCellPreCompRanks_", project, ".rds"))
+```
+
+## Adr - Mes
+```{r}
+signatures <- list(vanGroningen_ADR = vanGroningen_ADR,
+                  vanGroningen_MES = vanGroningen_MES,
+                  Boeva_noradrenergic = Boeva_noradrenergic,
+                  Boeva_NCC = Boeva_NCC,
+                  Yuan2020_adrenergic = Yuan2020_adrenergic,
+                  Yuan2020_mesenchymal = Yuan2020_mesenchymal
+                  )
+
+u.scores <- ScoreSignatures_UCell(features = signatures, precalc.ranks = ranks, force.gc = T) #7 min #_UCell added
+u.scores <- as.data.frame(u.scores)
+#save UCells scores
+saveRDS(u.scores, file = paste0(output_Robjects, step, "_UCellScores_AdrMes_", project, ".rds"))
+```
+
+```{r}
+u.scores <- readRDS("03c_post_scVI_R_plots/Robjects/03c_post_scVI_R_UCellScores_AdrMes_NBAtlas.rds")
+seuratObj <- AddMetaData(seuratObj, u.scores)
+```
+
+```{r}
+# Cutoffs
+max.cutoff <- 'q98'
+min.cutoff <- 'q2'
+
+max.use <- c()
+for (i in 1:dim(u.scores)[2]){
+  max.use <- c(max.use, SetQuantile(cutoff = max.cutoff, data = u.scores[,i])) #from seurat code
+}
+max.use <- max(max.use)
+
+# van Groningen
+q98s <- c(SetQuantile(cutoff = max.cutoff, data = seuratObj$vanGroningen_ADR_UCell),
+          SetQuantile(cutoff = max.cutoff, data = seuratObj$vanGroningen_MES_UCell)
+)
+q98s
+max.use <- max(q98s)
+
+q2s <- c(SetQuantile(cutoff = min.cutoff, data = seuratObj$vanGroningen_ADR_UCell),
+         SetQuantile(cutoff = min.cutoff, data = seuratObj$vanGroningen_MES_UCell)
+)
+q2s
+min.use <- min(q2s)
+
+FeaturePlot(seuratObj, features = c("vanGroningen_ADR_UCell", "vanGroningen_MES_UCell"), min.cutoff = min.use, max.cutoff = max.use, order = T, keep.scale = "all", cols = c("gray90","#286DAF"), raster = F)
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_VanGroningenAdrAndMes_Gray90-Paleblue_NBAtlas.png"), width = 15, height = 7)
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_VanGroningenAdrAndMes_Gray90-Paleblue_1000dpi_NBAtlas.png"), width = 15, height = 7, dpi = 1000)
+
+FeaturePlot(seuratObj, features = c("vanGroningen_ADR_UCell", "vanGroningen_MES_UCell"), min.cutoff = min.use, max.cutoff = max.use, order = T, keep.scale = "all", cols = c("gray90","blue"), raster = F)
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_VanGroningenAdrAndMes_Gray90-Blue_NBAtlas.png"), width = 15, height = 7)
+
+FeaturePlot(seuratObj, features = c("vanGroningen_ADR_UCell", "vanGroningen_MES_UCell"), min.cutoff = min.use, max.cutoff = max.use, order = T, keep.scale = "all", cols = c("gray90","firebrick4"), raster = F)
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_VanGroningenAdrAndMes_Gray90-Firebrick4_NBAtlas.png"), width = 15, height = 7)
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_VanGroningenAdrAndMes_Gray90-Firebrick4_1000dpi_NBAtlas.png"), width = 15, height = 7, dpi = 1000)
+
+FeaturePlot(seuratObj, features = c("vanGroningen_ADR_UCell", "vanGroningen_MES_UCell"), min.cutoff = min.use, max.cutoff = max.use, order = T, keep.scale = "all", cols = c("gray90","red"))
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_VanGroningenAdrAndMes_Gray90-Red_NBAtlas.png"), width = 15, height = 7)
+
+
+# Boxplot van Groningen MES & Adr vs celltype
+features = c("vanGroningen_ADR_UCell", "vanGroningen_MES_UCell"); xvalue = "annot_NBN_scarches"
+metaDataTable <- seuratObj@meta.data %>% 
+    dplyr::select(x = xvalue, features) %>% 
+    pivot_longer(cols = features, names_to = "feature", values_to = "value")
+  
+p <- ggplot(metaDataTable,aes(x=x,y=value,fill=feature)) +
+    #geom_jitter(height=0,width=0.1,alpha=0.2,color="gray",fill="white") +
+    geom_boxplot(alpha=0.6) + theme_bar_straight + ylab("UCell score") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+p
+ggsave(p, filename = paste0(output_figures, step, "_BoxPlot_UCell_VanGroningenMesVsAdr_vs_Celltype_", project, ".svg"), width = 9, height = 5)
+
+
+# Boeva
+q98s <- c(SetQuantile(cutoff = max.cutoff, data = seuratObj$Boeva_noradrenergic_UCell),
+          SetQuantile(cutoff = max.cutoff, data = seuratObj$Boeva_NCC_UCell)
+)
+q98s
+max.use <- max(q98s)
+
+q2s <- c(SetQuantile(cutoff = min.cutoff, data = seuratObj$Boeva_noradrenergic_UCell),
+         SetQuantile(cutoff = min.cutoff, data = seuratObj$Boeva_NCC_UCell)
+)
+q2s
+min.use <- min(q2s)
+
+FeaturePlot(seuratObj, features = c("Boeva_noradrenergic_UCell", "Boeva_NCC_UCell"), min.cutoff = min.use, max.cutoff = max.use, order = T, keep.scale = "all", cols = c("gray90","#286DAF"), raster = F)
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_BoevaNorAndNCC_Gray90-Paleblue_NBAtlas.png"), width = 15, height = 7)
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_BoevaNorAndNCC_Gray90-Paleblue_1000dpi_NBAtlas.png"), width = 15, height = 7, dpi = 1000)
+
+FeaturePlot(seuratObj, features = c("Boeva_noradrenergic_UCell", "Boeva_NCC_UCell"), min.cutoff = min.use, max.cutoff = max.use, order = T, keep.scale = "all", cols = c("gray90","firebrick4"), raster = F)
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_BoevaNorAndNCC_Gray90-Firebrick4_NBAtlas.png"), width = 15, height = 7)
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_BoevaNorAndNCC_Gray90-Firebrick4_1000dpi_NBAtlas.png"), width = 15, height = 7, dpi = 1000)
+
+# Yuan
+q98s <- c(SetQuantile(cutoff = max.cutoff, data = seuratObj$Yuan2020_adrenergic_UCell),
+          SetQuantile(cutoff = max.cutoff, data = seuratObj$Yuan2020_mesenchymal_UCell)
+)
+q98s
+max.use <- max(q98s)
+
+q2s <- c(SetQuantile(cutoff = min.cutoff, data = seuratObj$Yuan2020_adrenergic_UCell),
+         SetQuantile(cutoff = min.cutoff, data = seuratObj$Yuan2020_mesenchymal_UCell)
+)
+q2s
+min.use <- min(q2s)
+
+FeaturePlot(seuratObj, features = c("Yuan2020_adrenergic_UCell", "Yuan2020_mesenchymal_UCell"), min.cutoff = min.use, max.cutoff = max.use, order = T, keep.scale = "all", cols = c("gray90","#286DAF"), raster = F)
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_Yuan2022AdrAndMes_Gray90-Paleblue_NBAtlas.png"), width = 15, height = 7)
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_Yuan2022AdrAndMes_Gray90-Paleblue_1000dpi_NBAtlas.png"), width = 15, height = 7, dpi = 1000)
+
+FeaturePlot(seuratObj, features = c("Yuan2020_adrenergic_UCell", "Yuan2020_mesenchymal_UCell"), min.cutoff = min.use, max.cutoff = max.use, order = T, keep.scale = "all", cols = c("gray90","firebrick4"), raster = F)
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_Yuan2022AdrAndMes_Gray90-Firebrick4_NBAtlas.png"), width = 15, height = 7)
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_Yuan2022AdrAndMes_Gray90-Firebrick4_1000dpi_NBAtlas.png"), width = 15, height = 7, dpi = 1000)
+```
+
+```{r}
+signatures <- list(Reactome_ATR_Activation_ReplStress_UCell = Reactome_ATR_Activation_ReplStress, PREX_sensitivity_UCell = PREX_sensitivity)
+u.scores <- ScoreSignatures_UCell(features = signatures, precalc.ranks = ranks, force.gc = T) #_UCell added
+u.scores <- as.data.frame(u.scores)
+
+saveRDS(u.scores, file = paste0(output_Robjects, step, "_UCellScores_ReactomeATRactivationReplStress_PREXsensitivity_", project, ".rds"))
+
+seuratObj <- AddMetaData(seuratObj, u.scores)
+```
+
+```{r}
+FeaturePlot(seuratObj, features = c("Reactome_ATR_Activation_ReplStress_UCell"), min.cutoff = "q2", max.cutoff = "q98", order = T, raster = F) + red_blue_color_scale11
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_ReactomeATRactivationReplStress_NBAtlas.png"), width = 9, height = 7)
+FeaturePlot(seuratObj, features = c("Reactome_ATR_Activation_ReplStress_UCell"), min.cutoff = "q2", max.cutoff = "q98", raster = F) + red_blue_color_scale11
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_ReactomeATRactivationReplStress_Random_NBAtlas.png"), width = 9, height = 7)
+
+FeaturePlot(seuratObj, features = c("PREX_sensitivity_UCell"), min.cutoff = "q2", max.cutoff = "q98", order = T, raster = F) + red_blue_color_scale11
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_PREXsensitivity_NBAtlas.png"), width = 9, height = 7)
+FeaturePlot(seuratObj, features = c("PREX_sensitivity_UCell"), min.cutoff = "q2", max.cutoff = "q98", raster = F) + red_blue_color_scale11
+ggsave(paste0(dir_SignaturePlots, "03c_post_scVI_R_plots_covSample_UCell_SignaturePlot_PREXsensitivity_Random_NBAtlas.png"), width = 9, height = 7)
+```
+
+# Patient metadata
+```{r}
+PatientMeta <- read.csv("03c_post_scVI_R_plots/Tables/DataSetOverview_AllSamplesTable_FullMetaData_NBAtlas.csv")
+PatientMeta <- PatientMeta[!(PatientMeta$Sample == ""),] # remove empty rows
+
+head(PatientMeta)
+```
+
+```{r}
+rownames(PatientMeta) <- PatientMeta$Sample
+```
+
+## Write summary table
+```{r}
+summary_table_filename <- "DataSetOverview_AllSamplesTable_SummaryTable_NBAtlas.csv"
+
+write.csv(x = "Summary Table", file = paste0(output_tables, summary_table_filename), row.names = F, col.names = F)
+write.table(x = " " , file = paste0(output_tables, summary_table_filename), append = T, row.names = F, col.names = F, sep = ",")
+
+write.table(x = "Study" , file = paste0(output_tables, summary_table_filename), append = T, row.names = F, col.names = F, sep = ",")
+table(PatientMeta$Study)
+write.table(x = table(PatientMeta$Study) , file = paste0(output_tables, summary_table_filename), append = T, row.names = F, col.names = F, sep = ",")
+write.table(x = " " , file = paste0(output_tables, summary_table_filename), append = T, row.names = F, col.names = F, sep = ",")
+
+write.table(x = "Timepoint" , file = paste0(output_tables, summary_table_filename), append = T, row.names = F, col.names = F, sep = ",")
+table(PatientMeta$Timepoint)
+write.table(x = table(PatientMeta$Timepoint) , file = paste0(output_tables, summary_table_filename), append = T, row.names = F, col.names = F, sep = ",")
+write.table(x = " " , file = paste0(output_tables, summary_table_filename), append = T, row.names = F, col.names = F, sep = ",")
+
+write.table(x = "INSS stage" , file = paste0(output_tables, summary_table_filename), append = T, row.names = F, col.names = F, sep = ",")
+table(PatientMeta$INSS.stage)
+write.table(x = table(PatientMeta$INSS.stage) , file = paste0(output_tables, summary_table_filename), append = T, row.names = F, col.names = F, sep = ",")
+write.table(x = " " , file = paste0(output_tables, summary_table_filename), append = T, row.names = F, col.names = F, sep = ",")
+
+write.table(x = "MYCN_amplification" , file = paste0(output_tables, summary_table_filename), append = T, row.names = F, col.names = F, sep = ",")
+table(PatientMeta$MYCN_amplification)
+write.table(x = table(PatientMeta$MYCN_amplification) , file = paste0(output_tables, summary_table_filename), append = T, row.names = F, col.names = F, sep = ",")
+write.table(x = " " , file = paste0(output_tables, summary_table_filename), append = T, row.names = F, col.names = F, sep = ",")
+
+write.table(x = "Simplified_Risk" , file = paste0(output_tables, summary_table_filename), append = T, row.names = F, col.names = F, sep = ",")
+table(PatientMeta$Simplified_Risk)
+write.table(x = table(PatientMeta$Simplified_Risk) , file = paste0(output_tables, summary_table_filename), append = T, row.names = F, col.names = F, sep = ",")
+write.table(x = " " , file = paste0(output_tables, summary_table_filename), append = T, row.names = F, col.names = F, sep = ",")
+```
+
+## Add metadata to Seurat
+```{r}
+seuratObj$Patient_No <- PatientMeta[as.character(seuratObj$Sample), "Patient"]
+seuratObj$Timepoint <- PatientMeta[as.character(seuratObj$Sample), "Timepoint"]
+seuratObj$INSS_stage <- PatientMeta[as.character(seuratObj$Sample), "INSS.stage"]
+seuratObj$Risk_group <- PatientMeta[as.character(seuratObj$Sample),  "Risk.group..classification."]
+seuratObj$MYCN_amplification <- PatientMeta[as.character(seuratObj$Sample), "MYCN_amplification"]
+seuratObj$Simplified_Risk <- PatientMeta[as.character(seuratObj$Sample), "Simplified_Risk"]
+```
+
+```{r}
+seuratObj@meta.data %>% group_by(Sample, Patient_No) %>% summarize(n())
+seuratObj@meta.data %>% group_by(Sample, MYCN_amplification) %>% summarize(n())
+```
+
+
+```{r}
+timepoint_colors <- hue_pal()(length(levels(as.factor(seuratObj$Timepoint))))
+timepoint_colors[length(timepoint_colors)] <- "gray"
+
+mycn_colors <- hue_pal()(length(levels(as.factor(seuratObj$MYCN_amplification))))
+
+simplified_risk_colors <- hue_pal()(length(levels(as.factor(seuratObj$Simplified_Risk))))
+
+INSS_colors <- hue_pal()(length(levels(as.factor(seuratObj$INSS_stage))))
+INSS_colors[length(INSS_colors)] <- "gray"
+```
+
+```{r}
+DimPlot(seuratObj, reduction = reduction_to_plot,  group.by = "Timepoint", cols = timepoint_colors)
+ggsave(filename = paste0(output_figures, "03c_post_scVI_R_plots_covSample_UMAP_Timepoint_NBAtlas.png"), width = 10, height = 7)
+
+DimPlot(seuratObj, reduction = reduction_to_plot,  group.by = "Timepoint", shuffle = T, raster = F, cols = timepoint_colors)
+ggsave(filename = paste0(output_figures, "03c_post_scVI_R_plots_covSample_UMAP_Timepoint_HD_NBAtlas.png"), width = 15, height = 12)
+
+DimPlot(seuratObj, reduction = reduction_to_plot,  group.by = "INSS_stage", cols = INSS_colors)
+ggsave(filename = paste0(output_figures, "03c_post_scVI_R_plots_covSample_UMAP_INSS_stage_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = reduction_to_plot,  group.by = "INSS_stage", cols = INSS_colors, shuffle = T, raster = F)
+ggsave(filename = paste0(output_figures, "03c_post_scVI_R_plots_covSample_UMAP_INSS_stage_HD_NBAtlas.png"), width = 15, height = 12)
+
+DimPlot(seuratObj, reduction = reduction_to_plot,  group.by = "MYCN_amplification", cols = mycn_colors)
+ggsave(filename = paste0(output_figures, "03c_post_scVI_R_plots_covSample_UMAP_MYCNamplification_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = reduction_to_plot,  group.by = "MYCN_amplification", cols = mycn_colors , shuffle = T, raster = F) 
+ggsave(filename = paste0(output_figures, "03c_post_scVI_R_plots_covSample_UMAP_MYCNamplification_HD_NBAtlas.png"), width = 15, height = 12)
+
+DimPlot(seuratObj, reduction = reduction_to_plot,  group.by = "Simplified_Risk", cols = simplified_risk_colors)
+ggsave(filename = paste0(output_figures, "03c_post_scVI_R_plots_covSample_UMAP_SimplifiedRisk_NBAtlas.png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = reduction_to_plot,  group.by = "Simplified_Risk", cols = simplified_risk_colors)
+ggsave(filename = paste0(output_figures, "03c_post_scVI_R_plots_covSample_UMAP_SimplifiedRisk_HD_NBAtlas.png"), width = 15, height = 12)
+```
+
+```{r}
+meta <- "Timepoint"
+SeuratSplitPlotMeta(seuratObj, meta = meta, reduction_to_plot = reduction_to_plot, background_color = "gray90", colors = timepoint_colors)
+filename <- paste0(step, "_UMAP_Highlight_",meta,"_", project, ".png")
+ggsave( filename = filename, path = output_figures, width = 20, height = 15)
+
+meta <- "INSS_stage"
+SeuratSplitPlotMeta(seuratObj, meta = meta, reduction_to_plot = reduction_to_plot, background_color = "gray90", colors = INSS_colors)
+filename <- paste0(step, "_UMAP_Highlight_",meta,"_", project, ".png")
+ggsave( filename = filename, path = output_figures, width = 24, height = 20)
+
+names(mycn_colors) <- NULL
+meta <- "MYCN_amplification"
+SeuratSplitPlotMeta(seuratObj, meta = meta, reduction_to_plot = reduction_to_plot, background_color = "gray90", colors = mycn_colors)
+filename <- paste0(step, "_UMAP_Highlight_",meta,"_", project, ".png")
+ggsave( filename = filename, path = output_figures, width = 20, height = 9)
+
+meta <- "Simplified_Risk"
+SeuratSplitPlotMeta(seuratObj, meta = meta, reduction_to_plot = reduction_to_plot, background_color = "gray90", colors = simplified_risk_colors)
+filename <- paste0(step, "_UMAP_Highlight_",meta,"_", project, ".png")
+ggsave( filename = filename, path = output_figures, width = 20, height = 9)
+```
+
+Save metadata
+```{r}
+saveRDS(seuratObj@meta.data, file = paste0(output_Robjects, step,"_MetaData_PatientMetaData.rds"))
+```
+
+## Reload
+```{r}
+# reload
+MetaData <- readRDS(paste0(output_Robjects, step,"_MetaData_PatientMetaData.rds"))
+
+seuratObj$Patient_No <- MetaData$Patient_No
+seuratObj$Timepoint <- MetaData$Timepoint
+seuratObj$INSS_stage <- MetaData$INSS_stage
+seuratObj$Simplified_Risk <- MetaData$Simplified_Risk
+seuratObj$MYCN_amplification <- MetaData$MYCN_amplification
+seuratObj$Platform <- seuratObj$Platform
+```
+
+```{r}
+MetaData %>% group_by(Sample, MYCN_amplification) %>% summarize(n())
+```
+```{r}
+# Metadata summary barplots
+study_colors <- brewer.pal(n = length(levels(as.factor(seuratObj$Study))), name = "Dark2")
+assay_colors <- c("steelblue","goldenrod1")
+platform_colors <- c("darkolivegreen","deeppink2")
+timepoint_colors <- c("#D5820B","#34AA05","#339ACD","#BEBEBE")
+INSS_colors <- c("#abeab8",#1
+             "#61d733",#2A
+             "#2DCBA6",#2B
+             "#d17f69",#3
+             "#B22A05",#4
+             "#1d6700",#4S
+             "#E5E5E5")
+mycn_colors <- c("#C50B0B","#3ECD33") #,"#BEBEBE")
+
+ggplot(PatientMeta) + geom_bar(aes(y="Study",fill=Study), position = "fill") +  scale_fill_manual(name = "Study", values = study_colors) + theme_point + ylab("")+ xlab("")
+ggsave(paste0(output_figures, step, "_PatientMetaData_Barplot_Study_",  project, ".svg"), width = 9, height = 5)
+
+ggplot(PatientMeta) + geom_bar(aes(y="Assay",fill=Assay), position = "fill") +  scale_fill_manual(values = assay_colors) + theme_point + ylab("")+ xlab("")
+ggsave(paste0(output_figures, step, "_PatientMetaData_Barplot_Assay_",  project, ".svg"), width = 9, height = 5)
+
+meta <- "Platform"
+ggplot(PatientMeta) + geom_bar(aes(y=meta,fill=get(meta)), position = "fill") +  scale_fill_manual(name = meta, values = platform_colors) + theme_point + ylab("")+ xlab("")
+ggsave(paste0(output_figures, step, "_PatientMetaData_Barplot_", meta, "_",  project, ".svg"), width = 9, height = 5)
+
+meta <- "Timepoint"
+PatientMeta[,meta] <- factor(as.character(PatientMeta[,meta]), levels = rev(levels(as.factor(PatientMeta[,meta]))))
+ggplot(PatientMeta) + geom_bar(aes(y=meta,fill=get(meta)), position = "fill") +  scale_fill_manual(name = meta, values = rev(timepoint_colors)) + theme_point + ylab("")+ xlab("")
+ggsave(paste0(output_figures, step, "_PatientMetaData_Barplot_", meta, "_",  project, ".svg"), width = 9, height = 5)
+
+meta <- "INSS.stage"
+PatientMeta$INSS.stage[PatientMeta$INSS.stage == "Localized"] <- "unknown"
+PatientMeta[,meta] <- factor(as.character(PatientMeta[,meta]), levels = rev(levels(as.factor(PatientMeta[,meta]))))
+ggplot(PatientMeta) + geom_bar(aes(y=meta,fill=get(meta)), position = "fill") +  scale_fill_manual(name = meta, values = rev(INSS_colors)) + theme_point + ylab("")+ xlab("")
+ggsave(paste0(output_figures, step, "_PatientMetaData_Barplot_", "INSS_stage", "_",  project, ".svg"), width = 9, height = 5)
+
+meta <- "MYCN_amplification"
+PatientMeta$MYCN_amplification[PatientMeta$Sample == "Verhoeven2022_NB37"] <- "Amplified"
+ggplot(PatientMeta) + geom_bar(aes(y=meta,fill=get(meta)), position = "fill") +  scale_fill_manual(name = meta, values = mycn_colors) + theme_point + ylab("")+ xlab("")
+ggsave(paste0(output_figures, step, "_PatientMetaData_Barplot_", "MYCN_status", "_",  project, ".svg"), width = 9, height = 5) 
+
+meta <- "Risk"
+ggplot(PatientMeta) + geom_bar(aes(y=meta,fill=Simplified_Risk), position = "fill") +  scale_fill_manual(name = meta, values = mycn_colors) + theme_point + ylab("")+ xlab("")
+ggsave(paste0(output_figures, step, "_PatientMetaData_Barplot_", meta, "_",  project, ".svg"), width = 9, height = 5) 
+```
+
+# Sn vs Sc
+## Schwann
+```{r}
+celltype <- "Schwann"
+seurat_subset <- subset(seuratObj, subset = annot_NBN_scarches == celltype)
+```
+
+```{r}
+table(seurat_subset$Assay) 
+Idents(seurat_subset) <- as.character(seurat_subset$Assay)
+table(Idents(seurat_subset))
+
+FindCellTypeMarkers_results <- list()
+
+table <- FindMarkers(seurat_subset, ident.1 = "single-cell", ident.2 = "single-nucleus", logfc.threshold = 0.3, min.pct = 0.3)
+  
+table$gene <- rownames(table)
+table$cluster <- rep("ScVsSn", nrow(table))
+table$score <- table$pct.1 / (table$pct.2 + 0.01) * table$avg_log2FC
+    
+table <- table[ order(table$score, decreasing=TRUE), ]
+FindCellTypeMarkers_results[[paste0(celltype, "_ScVsSn")]] <- table
+
+table <- FindMarkers(seurat_subset, ident.1 = "single-nucleus", ident.2 = "single-cell", logfc.threshold = 0.3, min.pct = 0.3)
+  
+table$gene <- rownames(table)
+table$cluster <- rep("SnVsSc", nrow(table))
+table$score <- table$pct.1 / (table$pct.2 + 0.01) * table$avg_log2FC
+    
+table <- table[ order(table$score, decreasing=TRUE), ]
+FindCellTypeMarkers_results[[paste0(celltype, "_SnVsSc")]] <- table
+
+openxlsx::write.xlsx(FindCellTypeMarkers_results, file = paste0(output_tables, step, "_FindCellTypeMarkers_", celltype, "_Cells_ScVsSn_",  project,".xlsx"), overwrite = T)
+saveRDS(FindCellTypeMarkers_results, file = paste0(output_Robjects, step, "_FindCellTypeMarkers_", celltype, "Cells_ScVsSn_",  project,".rds"))
+```
+```{r}
+FindCellTypeMarkers_results <- readRDS(paste0(output_Robjects, step, "_FindCellTypeMarkers_", celltype, "Cells_ScVsSn_",  project,".rds"))
+
+ScVsSn_table <- FindCellTypeMarkers_results[[paste0(celltype, "_ScVsSn")]]
+SnVsSc_table <- FindCellTypeMarkers_results[[paste0(celltype, "_SnVsSc")]]
+
+seurat_subset <- NormalizeData(seurat_subset)
+seurat_subset <- ScaleData(seurat_subset)
+
+ScVsSn_average <- AverageExpression(seurat_subset, features = rownames(seurat_subset@assays$RNA@data), group.by = "Assay",  return.seurat = TRUE)
+```
+```{r}
+ScVsSn_average_df <- data.frame(ScVsSn_average@assays$RNA@data)
+ScVsSn_average_df$gene <- rownames(ScVsSn_average_df)
+
+ScVsSn_average_df$label <- ifelse(ScVsSn_average_df$gene %in% ScVsSn_table[1:50, "gene"]| ScVsSn_average_df$gene %in% SnVsSc_table[1:50, "gene"], ScVsSn_average_df$gene, "")
+
+ScVsSn_average_df$single.cell_log10 <- log10(ScVsSn_average_df$single.cell)
+ScVsSn_average_df$single.cell_log10[ScVsSn_average_df$single.cell_log10 == -Inf ] <- min(ScVsSn_average_df$single.cell_log10[ScVsSn_average_df$single.cell_log10 != -Inf]) - 0.2
+
+ScVsSn_average_df$single.nucleus_log10 <- log10(ScVsSn_average_df$single.nucleus)
+ScVsSn_average_df$single.nucleus_log10[ScVsSn_average_df$single.nucleus_log10 == -Inf ] <- min(ScVsSn_average_df$single.nucleus_log10[ScVsSn_average_df$single.nucleus_log10 != -Inf]) - 0.2
+
+p <- ScVsSn_average_df %>% ggplot(aes(x = `single.nucleus`, y = `single.cell`, label = gene)) + geom_point(alpha = 0.2) + theme_point + geom_text_repel(aes(label = label), point.padding = 1, box.padding = 0.25, show.legend = FALSE, max.overlaps = 30, size = 2.5, seed = 123)
+p
+ggsave(p, filename = paste0(output_figures, step, "_", celltype, "_ScVsSn_ScatterPlotAvExpression_vNonLog_", project, ".png" ), width = 10, height = 10, dpi = 500)
+
+p <- ScVsSn_average_df %>% ggplot(aes(x = `single.nucleus_log10`, y = `single.cell_log10`, label = gene)) + geom_point(alpha = 0.2) + theme_point + geom_text_repel(aes(label = label), point.padding = 1, box.padding = 0.25, show.legend = FALSE, max.overlaps = 30, size = 2.5, seed = 123) # + geom_smooth()
+p
+ggsave(p, filename = paste0(output_figures, step, "_", celltype, "_ScVsSn_ScatterPlotAvExpression_v3_", project, ".png" ), width = 10, height = 10, dpi = 500)
+```
+
+```{r}
+rm(celltype, seurat_subset, FindCellTypeMarkers_results, table, ScVsSn_table, SnVsSc_table, ScVsSn_average, ScVsSn_average_df, p)
+gc()
+```
+
+## Endo
+```{r}
+celltype <- "Endothelial"
+seurat_subset <- subset(seuratObj, subset = annot_NBN_scarches == celltype)
+
+table(seurat_subset$Assay) # single-cell (n = 943) & single-nucleus (n=1,117)
+
+Idents(seurat_subset) <- as.character(seurat_subset$Assay)
+table(Idents(seurat_subset))
+
+FindCellTypeMarkers_results <- list()
+
+table <- FindMarkers(seurat_subset, ident.1 = "single-cell", ident.2 = "single-nucleus", logfc.threshold = 0.3, min.pct = 0.3)
+  
+table$gene <- rownames(table)
+table$cluster <- rep("ScVsSn", nrow(table))
+table$score <- table$pct.1 / (table$pct.2 + 0.01) * table$avg_log2FC
+    
+table <- table[ order(table$score, decreasing=TRUE), ]
+FindCellTypeMarkers_results[[paste0(celltype, "_ScVsSn")]] <- table
+
+table <- FindMarkers(seurat_subset, ident.1 = "single-nucleus", ident.2 = "single-cell", logfc.threshold = 0.3, min.pct = 0.3)
+  
+table$gene <- rownames(table)
+table$cluster <- rep("SnVsSc", nrow(table))
+table$score <- table$pct.1 / (table$pct.2 + 0.01) * table$avg_log2FC
+    
+table <- table[ order(table$score, decreasing=TRUE), ]
+FindCellTypeMarkers_results[[paste0(celltype, "_SnVsSc")]] <- table
+
+openxlsx::write.xlsx(FindCellTypeMarkers_results, file = paste0(output_tables, step, "_FindCellTypeMarkers_", celltype, "_Cells_ScVsSn_",  project,".xlsx"), overwrite = T)
+saveRDS(FindCellTypeMarkers_results, file = paste0(output_Robjects, step, "_FindCellTypeMarkers_", celltype, "Cells_ScVsSn_",  project,".rds"))
+```
+```{r}
+FindCellTypeMarkers_results <- readRDS(paste0(output_Robjects, step, "_FindCellTypeMarkers_", celltype, "Cells_ScVsSn_",  project,".rds"))
+
+ScVsSn_table <- FindCellTypeMarkers_results[[paste0(celltype, "_ScVsSn")]]
+SnVsSc_table <- FindCellTypeMarkers_results[[paste0(celltype, "_SnVsSc")]]
+
+seurat_subset <- NormalizeData(seurat_subset)
+seurat_subset <- ScaleData(seurat_subset)
+
+ScVsSn_average <- AverageExpression(seurat_subset, features = rownames(seurat_subset@assays$RNA@data), group.by = "Assay",  return.seurat = TRUE)
+```
+```{r}
+ScVsSn_average_df <- data.frame(ScVsSn_average@assays$RNA@data)
+ScVsSn_average_df$gene <- rownames(ScVsSn_average_df)
+
+ScVsSn_average_df$label <- ifelse(ScVsSn_average_df$gene %in% ScVsSn_table[1:50, "gene"]| ScVsSn_average_df$gene %in% SnVsSc_table[1:50, "gene"], ScVsSn_average_df$gene, "")
+
+ScVsSn_average_df$single.cell_log10 <- log10(ScVsSn_average_df$single.cell)
+ScVsSn_average_df$single.cell_log10[ScVsSn_average_df$single.cell_log10 == -Inf ] <- min(ScVsSn_average_df$single.cell_log10[ScVsSn_average_df$single.cell_log10 != -Inf]) - 0.2
+
+ScVsSn_average_df$single.nucleus_log10 <- log10(ScVsSn_average_df$single.nucleus)
+ScVsSn_average_df$single.nucleus_log10[ScVsSn_average_df$single.nucleus_log10 == -Inf ] <- min(ScVsSn_average_df$single.nucleus_log10[ScVsSn_average_df$single.nucleus_log10 != -Inf]) - 0.2
+
+p <- ScVsSn_average_df %>% ggplot(aes(x = `single.nucleus`, y = `single.cell`, label = gene)) + geom_point(alpha = 0.2) + theme_point + geom_text_repel(aes(label = label), point.padding = 1, box.padding = 0.25, show.legend = FALSE, max.overlaps = 30, size = 2.5, seed = 123)
+p
+ggsave(p, filename = paste0(output_figures, step, "_", celltype, "_ScVsSn_ScatterPlotAvExpression_vNonLog_", project, ".png" ), width = 10, height = 10, dpi = 500)
+
+p <- ScVsSn_average_df %>% ggplot(aes(x = `single.nucleus_log10`, y = `single.cell_log10`, label = gene)) + geom_point(alpha = 0.2) + theme_point + geom_text_repel(aes(label = label), point.padding = 1, box.padding = 0.25, show.legend = FALSE, max.overlaps = 30, size = 2.5, seed = 123)
+p
+ggsave(p, filename = paste0(output_figures, step, "_", celltype, "_ScVsSn_ScatterPlotAvExpression_v3_", project, ".png" ), width = 10, height = 10, dpi = 500)
+ggsave(p, filename = paste0(output_figures, step, "_", celltype, "_ScVsSn_ScatterPlotAvExpression_v3_", project, ".svg" ), width = 10, height = 10)
+```
+
+## Dissociation signature
+```{r}
+u.scores <- ScoreSignatures_UCell(matrix = seurat_subset@assays[["RNA"]]@counts, features = list(vandenBrink2017_diss_sign = vandenBrink2017_diss_sign))
+u.scores <- as.data.frame(u.scores)
+saveRDS(u.scores, file = paste0(output_Robjects, step, "_UCellScores_VanDenBrink2017_", project, ".rds"))
+```
+
+```{r}
+seuratObj <- AddMetaData(seuratObj, u.scores)
+```
+
+```{r}
+seuratObj@meta.data %>% ggplot(aes(x = annot_NBN_scarches, y = vandenBrink2017_diss_sign, fill = Assay)) + geom_violin(alpha=0.6) + geom_jitter(width=0.1, alpha=0.2)
+
+seuratObj@meta.data %>%
+  ggplot(aes(x = annot_NBN_scarches, y = vandenBrink2017_diss_sign, fill = Assay)) +
+  geom_jitter(position = position_jitterdodge(dodge.width = 0.75), alpha = 0.2, color = "gray") + geom_violin(alpha = 0.6) +
+  theme_point & RotatedAxis()
+ggsave(filename = paste0(output_figures, step, "_ScVsSn_VandenBrink2017_ViolinPerCellType", project, ".png" ), width = 10, height = 7, dpi = 500)
+ggsave(filename = paste0(output_figures, step, "_ScVsSn_VandenBrink2017_ViolinPerCellType", project, ".svg" ), width = 10, height = 7)
+```

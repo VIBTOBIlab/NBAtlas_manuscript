@@ -1,0 +1,77 @@
+---
+title: "Calc UCell Ranks"
+author: "Noah Bonine"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: cosmo
+    highlight: textmate
+    df_print: paged
+    toc: true
+    toc_depth: 2
+params:
+  output_dir: x
+  step: x
+  project: x
+  input_SeuratObj: x
+  nCores: x
+---
+
+```{r libs}
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(tidyverse)
+  library(scales)
+  library(RColorBrewer)
+  library(svglite)
+  library(arrow)
+  library(stringr)
+  library(BiocParallel)
+  library(UCell)
+})
+options(bitmapType='cairo')
+```
+
+```{r seed}
+set.seed(123)
+```
+
+```{r dir}
+output_dir <- params$output_dir
+output_figures <- paste0(output_dir, "Figures/")
+output_tables <- paste0(output_dir, "Tables/")
+output_Robjects <- paste0(output_dir, "Robjects/")
+dir_SignaturePlots <- paste0(output_figures, "/SignaturePlots/")
+dir_FeaturePlots <- paste0(output_figures, "/FeaturePlots/")
+dir.create(output_dir)
+dir.create(output_figures)
+dir.create(output_tables)
+dir.create(output_Robjects)
+dir.create(dir_SignaturePlots)
+dir.create(dir_FeaturePlots)
+```
+```{r source}
+source("/kyukon/data/gent/vo/000/gvo00027/vsc44341/R_HelperFunctions_NB/plotColors_NB.R")
+source("/kyukon/data/gent/vo/000/gvo00027/vsc44341/R_HelperFunctions_NB/genesets_NB.R")
+```
+
+```{r params}
+params
+step <- params$step
+project <- params$project
+
+nCores <- params$nCores
+```
+
+# Load seuratObj
+```{r load_seurat}
+seuratObj <- readRDS(params$input_SeuratObj)
+gc()
+```
+
+# UCell
+```{r UCell}
+message("Calculating UCell ranks...")
+ranks <- StoreRankings_UCell(seuratObj@assays[["RNA"]]@counts, force.gc = T, ncores = nCores) #
+saveRDS(ranks, file = paste0(output_Robjects, step, "_UCellPreCompRanks_", project, ".rds"))
+```

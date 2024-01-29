@@ -1,0 +1,222 @@
+---
+title: "05f_SingleR_inhouseData_R_plots_NBAtlas"
+author: "Noah Bonine"
+date: '`r Sys.Date()`'
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({
+  #library(scater)
+  #library(Matrix)
+  library(Seurat)
+  library(tidyverse)
+  #library(plot1cell)
+  library(scales)
+  library(RColorBrewer)
+  library(svglite)
+})
+options(bitmapType='cairo')
+```
+
+```{r}
+set.seed(123)
+```
+
+```{r}
+output_dir <- "05f_SingleR_inhouseData_NBAtlas/"
+output_figures <- paste0(output_dir, "Figures/")
+output_tables <- paste0(output_dir, "Tables/")
+output_Robjects <- paste0(output_dir, "Robjects/")
+dir_SignaturePlots <- paste0(output_figures, "/SignaturePlots/")
+dir_FeaturePlots <- paste0(output_figures, "/FeaturePlots/")
+dir.create(output_dir)
+dir.create(output_figures)
+dir.create(output_tables)
+dir.create(output_Robjects)
+dir.create(dir_SignaturePlots)
+dir.create(dir_FeaturePlots)
+```
+
+```{r}
+step <- "05f_SingleR_inhouseData"
+project <- "NBAtlas"
+```
+
+# Prepare query obj
+Query = target = test
+```{r}
+# prepare test obj: log normalize
+seuratObj <- Read10X_h5("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/05a_pre_scArches_R_import_NBAtlas/h5objects/nb_matrix_target_data_NBAtlas.h5")
+seuratObj <- CreateSeuratObject(seuratObj)
+```
+
+```{r}
+seuratObj <- NormalizeData(seuratObj, normalization.method = "LogNormalize")
+```
+```{r}
+saveRDS(seuratObj, file = paste0("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas/05f_SingleR_inhouseData_NBAtlas/Robjects/",step,"_input_seurat_", project, ".rds"))
+```
+see `05f_SingleR_inhouseData_NBAtlas`
+
+# SingleR figs
+
+```{r}
+SingleR_pred <- readRDS("05f_SingleR_inhouseData_NBAtlas/Robjects/inhouseData_vs_NBAtlas_SingleR_predictionsNBAtlas.rds")
+```
+
+```{r}
+table(SingleR_pred$pruned.labels)
+table(Label = SingleR_pred$labels, Lost = is.na(SingleR_pred$pruned.labels)) #discarded cells of each label
+```
+```{r}
+percent_data <- data.frame(SingleR_pred@listData) %>%
+  group_by(labels) %>%
+  summarize(count = n()) %>%
+  mutate(percent = count/sum(count))
+ggplot(percent_data, aes(y = labels, x = percent, fill = labels)) + geom_col() + scale_x_continuous(labels = percent_format())+ theme_bar_straight + labs(x = "Percentage")
+
+ggsave(filename = paste0(output_figures, step, "SingleR_LabelsBarPlot", project, ".svg"), width = 7, height = 5)
+```
+
+```{r}
+png(filename =  paste0(output_figures, step, "SingleR_ScoreHeatmap_",project, ".png"), width = 24, height = 7, units = 'in', res = 500) #wide to avoid white lines
+plotScoreHeatmap(SingleR_pred)
+dev.off()
+```
+```{r}
+plotScoreHeatmap(SingleR_pred, color = hue_pal()(length(levels(as.factor(SingleR_pred$labels)))))
+```
+```{r}
+length(SingleR_pred$labels)
+length(SingleR_pred$pruned.labels)
+
+df_pred <- data.frame(cellname = singleR_predictions@rownames, SingleR_label = singleR_predictions$pruned.labels)
+rownames(df_pred) <- df_pred$cellname
+write.table(df_pred, file = paste0(output_tables, step, "_SingleR_predictions_", project, ".csv"), col.names = T, sep = ",")
+```
+
+# Plots with scarches umap
+```{r}
+#lightweight
+seuratObj <- readRDS("05d_scArches_SCANVI_NBAtlas_v2_R_import/Robjects/05d_scArches_SCANVI_NBAtlasAndInhouseData_v2_seuratObj_NormOnly_NBAtlas.rds")
+
+cell_ids_v2 <- gsub(pattern = "-[0-9]*$", replacement = "", x = Cells(seuratObj)) 
+seuratObj <- RenameCells(seuratObj, new.names = cell_ids_v2)
+gc()
+```
+
+```{r}
+# reload
+MetaData <- readRDS("05e_scArches_SCANVI_R_plots_NBAtlas/Robjects/05e_scArches_SCANVI_SeuratMetaData_NBAtlas.rds")
+celltype_colors_all <- readRDS("05e_scArches_SCANVI_R_plots_NBAtlas/Robjects/celltype_colors_all.rds")
+celltype_colors_all_d <- readRDS("05e_scArches_SCANVI_R_plots_NBAtlas/Robjects/celltype_colors_all_d.rds")
+
+seuratObj$umap_1 <- MetaData$umap_1
+seuratObj$umap_2 <- MetaData$umap_2
+seuratObj$manual_annotation <- MetaData$manual_annotation
+```
+
+```{r}
+cellnames_intersect <- SingleR_pred@rownames[ SingleR_pred@rownames %in% Cells(seuratObj)]
+
+seuratObj$SingleR_pred <- "undefined"
+seuratObj$SingleR_pred[!(seuratObj$Study %in% c("Bonine2023_cell","Bonine2023_nucleus"))] <- "reference"
+seuratObj@meta.data[cellnames_intersect,]["SingleR_pred"] <- SingleR_pred[cellnames_intersect,][["pruned.labels"]]
+seuratObj$SingleR_pred[is.na(seuratObj$SingleR_pred)] <- "undefined"
+
+table(seuratObj$SingleR_pred, useNA = "ifany") #should not contain NAs
+table(SingleR_pred$pruned.labels, useNA = "ifany")
+```
+
+### Final
+```{r}
+seuratObj$SingleR_pred_final <- seuratObj$SingleR_pred
+table(seuratObj$SingleR_pred_final)
+```
+
+## Plots
+```{r}
+ggplot() + geom_point(data = seuratObj@meta.data[!(seuratObj$Study %in% c("Bonine2023_cell","Bonine2023_nucleus")),], aes(x = umap_1, y = umap_2, color = SingleR_pred), size = 0.5) + #gray background
+  geom_point(data = seuratObj@meta.data[seuratObj$Study %in% c("Bonine2023_cell","Bonine2023_nucleus"),], aes(x = umap_1, y = umap_2, color = SingleR_pred), size = 0.5) + scale_color_manual(values = celltype_colors_all) + theme_point + guides(colour = guide_legend(override.aes = list(size=2)))
+ggsave(filename = paste0(output_figures, step, "_UMAP_ColPerSinglerPred_HighlightPredictions_Recollored_", project, ".png"), width = 9, height = 7)
+
+seuratObj$SingleR_pred_f <- factor(seuratObj$SingleR_pred, levels = c("reference","undefined","RBCs","B cell", "Stromal other","Schwann",  "Endothelial","Fibroblast", "Myeloid", "NE","NK cell",  "pDC", "Plasma","T cell"))
+
+seuratObj@meta.data %>% arrange(SingleR_pred_f) -> metadata_ordered
+ggplot() + geom_point(data = seuratObj@meta.data[!(seuratObj$Study %in% c("Bonine2023_cell","Bonine2023_nucleus")),], aes(x = umap_1, y = umap_2, color = SingleR_pred), size = 0.5) + #gray background
+  geom_point(data = metadata_ordered[metadata_ordered$Study %in% c("Bonine2023_cell","Bonine2023_nucleus"),], aes(x = umap_1, y = umap_2, color = SingleR_pred_f), size = 0.5) + scale_color_manual(values = celltype_colors_all) + theme_point + guides(colour = guide_legend(override.aes = list(size=2)))  
+ggsave(filename = paste0(output_figures, step, "_UMAP_ColPerSinglerPred_HighlightPredictions_Recollored_v2_", project, ".png"), width = 9, height = 7, dpi = 500)
+```
+
+```{r}
+# Manual annot vs singler pred heatmap
+meta_data_subset <- seuratObj@meta.data %>% filter(manual_annotation != "reference") %>% select(manual_annotation, SingleR_pred)
+abundance_table <- table(meta_data_subset) %>% prop.table(margin = 1)
+abundance_df <- as.data.frame(as.table(abundance_table))
+
+ggplot(abundance_df, aes(x = SingleR_pred, y = manual_annotation, fill = Freq)) +
+  geom_tile() + scale_fill_viridis_c() +  
+  theme_minimal() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggsave(filename = paste0(output_figures, step, "_Heatmap_RelReq_ManualAnnot_vs_SingleR_pred_viridis_", project, ".svg"), width = 5, height = 5)
+
+# Agreement
+table(seuratObj$manual_annotation, useNA = "ifany")
+table(seuratObj$SingleR_pred, useNA = "ifany")
+
+correct <- sum( (seuratObj$manual_annotation != "reference") & (seuratObj$manual_annotation != "undefined") & (seuratObj$manual_annotation == seuratObj$SingleR_pred) )
+correct
+total <- sum((seuratObj$manual_annotation != "reference") & (seuratObj$manual_annotation != "undefined"))
+total
+correct/total*100 #
+
+undefined <- sum(seuratObj$SingleR_pred == "undefined")
+undefined
+total <- sum((seuratObj$manual_annotation != "reference") & (seuratObj$manual_annotation != "undefined"))
+total
+undefined/total*100
+```
+
+### Final
+
+```{r}
+seuratObj$SingleR_pred_final_f <- factor(seuratObj$SingleR_pred_final, levels = c("reference","undefined","RBCs","B cell", "Stromal other","Schwann",  "Endothelial","Fibroblast", "Myeloid", "NE","NK cell",  "pDC", "Plasma","T cell"))
+
+seuratObj@meta.data %>% arrange(SingleR_pred_final_f) -> metadata_ordered
+ggplot() + geom_point(data = seuratObj@meta.data[!(seuratObj$Study %in% c("Bonine2023_cell","Bonine2023_nucleus")),], aes(x = umap_1, y = umap_2), color = "gray90", size = 0.5) + #gray background
+  geom_point(data = metadata_ordered[(metadata_ordered$Study %in% c("Bonine2023_cell","Bonine2023_nucleus")),], aes(x = umap_1, y = umap_2, color = SingleR_pred_final_f), size = 0.5) + scale_color_manual(values = celltype_colors_all_d) + theme_point + guides(colour = guide_legend(override.aes = list(size=2)))  
+ggsave(filename = paste0(output_figures, step, "_UMAP_ColPerSinglerPredvCleaned_HighlightPredictions_Recollored_v2_", project, ".png"), width = 9, height = 7, dpi = 500)
+```
+
+```{r}
+# Manual annot vs singler pred heatmap 
+meta_data_subset <- seuratObj@meta.data %>% filter(manual_annotation != "reference" ) %>% select(manual_annotation, SingleR_pred_final)
+abundance_table <- table(meta_data_subset) %>% prop.table(margin = 1)
+abundance_df <- as.data.frame(as.table(abundance_table))
+
+ggplot(abundance_df, aes(x = SingleR_pred_final, y = manual_annotation, fill = Freq)) +
+  geom_tile() + scale_fill_viridis_c() +  
+  theme_minimal() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggsave(filename = paste0(output_figures, step, "_Heatmap_RelReq_ManualAnnot_vs_SingleR_pred_vFinal_viridis_", project, ".svg"), width = 5, height = 5)
+
+# Agreement
+table(seuratObj$manual_annotation_final, useNA = "ifany")
+table(seuratObj$SingleR_pred, useNA = "ifany")
+
+correct <- sum( (seuratObj$manual_annotation != "reference") & (seuratObj$manual_annotation != "undefined") & (seuratObj$leiden != "11") & (seuratObj$manual_annotation == seuratObj$SingleR_pred) )
+correct 
+total <- sum((seuratObj$manual_annotation != "reference") & (seuratObj$manual_annotation != "undefined"))
+total 
+correct/total*100
+
+undefined <- sum(seuratObj$SingleR_pred == "undefined" & (seuratObj$leiden != "11"))
+undefined
+total <- sum((seuratObj$manual_annotation != "reference") & (seuratObj$leiden != "11") & (seuratObj$manual_annotation != "undefined"))
+total
+undefined/total*100
+```
+
+## Save
+```{r}
+saveRDS(seuratObj@meta.data, file = paste0(output_Robjects, step, "_SeuratMetaData_", project, ".rds"))
+```
