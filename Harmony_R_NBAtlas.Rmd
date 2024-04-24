@@ -1,0 +1,114 @@
+---
+title: "03a_Harmony_Rebuttal_R_NBAtlas"
+output: html_document
+date: '`r Sys.Date()`'
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(tidyverse)
+  library(scales)
+  library(RColorBrewer)
+  library(svglite)
+  library(arrow)
+  library(stringr)
+  library(harmony)
+})
+
+options(bitmapType='cairo')
+
+```
+```{r}
+set.seed(123)
+```
+
+```{r}
+setwd("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas")
+```
+```{r}
+output_dir <- "03a_Harmony_Rebuttal_R/"
+
+output_figures <- paste0(output_dir, "Figures/")
+output_tables <- paste0(output_dir, "Tables/")
+output_Robjects <- paste0(output_dir, "Robjects/")
+
+dir_SignaturePlots <- paste0(output_figures, "/SignaturePlots/")
+dir_FeaturePlots <- paste0(output_figures, "/FeaturePlots/")
+
+
+dir.create(output_dir)
+dir.create(output_figures)
+dir.create(output_tables)
+dir.create(output_Robjects)
+
+dir.create(dir_SignaturePlots)
+dir.create(dir_FeaturePlots)
+```
+```{r}
+source("/kyukon/data/gent/vo/000/gvo00027/vsc44341/R_HelperFunctions_NB/plotColors_NB.R")
+source("/kyukon/data/gent/vo/000/gvo00027/vsc44341/R_HelperFunctions_NB/genesets_NB.R")
+```
+
+```{r}
+reduction_to_plot <- "HarmonyUMAP"
+step <- "03a_Harmony_Rebuttal_R"
+project <- "NBAtlas"
+```
+
+# Harmony Sample
+```{r}
+dims <- 25
+
+theta <- c(2)
+maxIterCluster <- 150
+maxIterHarmony <- 20 #
+
+seuratObj <- RunHarmony(
+  seuratObj, theta = theta, group.by.vars = c("Sample"), plot_convergence = TRUE, nclust = 50,
+  max.iter.cluster = maxIterCluster, max.iter.harmony = maxIterHarmony, dims.use = 1:dims
+) #default theta = 2
+```
+
+```{r}
+DimPlot(seuratObj, reduction = "harmony", group.by = "Sample") & NoLegend()
+```
+
+```{r}
+res <- 0.8
+seuratObj <- seuratObj %>%
+  RunUMAP(reduction = "harmony", reduction.name = "HarmonyUMAP",  dims = 1:dims) %>%
+  FindNeighbors(reduction = "harmony", dims = 1:dims) %>%
+  FindClusters(resolution = res)
+seuratObj
+```
+
+```{r}
+assay_colors <- c("steelblue","goldenrod1")
+study_colors <- brewer.pal(n = length(levels(as.factor(seuratObj$Study))), name = "Dark2")
+```
+
+```{r}
+DimPlot(seuratObj, reduction = reduction_to_plot, group.by = "Sample") & NoLegend()
+ggsave(filename = paste0(output_figures, step, "_UMAP_Harmony_SampleTheta2_ColPerSample_", project, ".png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = reduction_to_plot, group.by = "Assay", shuffle = T) + scale_color_manual(values = assay_colors)
+ggsave(filename = paste0(output_figures, step, "_UMAP_Harmony_SampleTheta2_ColPerAssay_Shuffled_AssayColors_", project, ".png"), width = 9, height = 7)
+
+DimPlot(seuratObj, reduction = reduction_to_plot, group.by = "Study", shuffle = T) + scale_color_manual(values = study_colors)
+ggsave(filename = paste0(output_figures, step, "_UMAP_Harmony_SampleTheta2_ColPerStudy_Shuffled_StudyColors_", project, ".png"), width = 9, height = 7)
+```
+
+```{r}
+DimPlot(seuratObj, reduction = reduction_to_plot, group.by = "annot_NBN_scarches", label = T)
+ggsave(filename = paste0(output_figures, step, "_UMAP_Harmony_SampleTheta2_ColPerSCVIAnnotation_Labeled_", project, ".png"), width = 9, height = 7)
+```
+
+```{r}
+saveRDS(seuratObj, paste0(output_Robjects, step, "_SampleTheta2_", project, ".rds"))
+```
+
+```{r}
+seuratObj <- readRDS(paste0(output_Robjects, step, "_SampleTheta2_", project, ".rds"))
+```
+

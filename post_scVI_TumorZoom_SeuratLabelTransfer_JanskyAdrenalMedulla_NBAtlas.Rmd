@@ -1,0 +1,120 @@
+---
+title: "06c_post_scVI_TumorZoom_SeuratLabelTransfer_JanskyAdrenalMedulla_NBAtlas"
+output: html_document
+date: '`r Sys.Date()`'
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(tidyverse)
+  library(scales)
+  library(RColorBrewer)
+  library(arrow)
+  library(Matrix)
+})
+
+options(bitmapType='cairo')
+```
+
+```{r}
+set.seed(123)
+```
+
+```{r}
+setwd("/scratch/gent/vo/000/gvo00027/projects/Single_Cell_Neuroblastoma/NBAtlas")
+```
+```{r}
+output_dir <- "06c_post_scVI_TumorZoom_SeuratLabelTransfer_JanskyAdrenalMedulla_NBAtlas/"
+
+output_figures <- paste0(output_dir, "Figures/")
+output_tables <- paste0(output_dir, "Tables/")
+output_Robjects <- paste0(output_dir, "Robjects/")
+
+dir_SignaturePlots <- paste0(output_figures, "/SignaturePlots/")
+dir_FeaturePlots <- paste0(output_figures, "/FeaturePlots/")
+
+
+dir.create(output_dir)
+dir.create(output_figures)
+dir.create(output_tables)
+dir.create(output_Robjects)
+
+dir.create(dir_SignaturePlots)
+dir.create(dir_FeaturePlots)
+```
+```{r}
+source("/kyukon/data/gent/vo/000/gvo00027/vsc44341/R_HelperFunctions_NB/plotColors_NB.R")
+source("/kyukon/data/gent/vo/000/gvo00027/vsc44341/R_HelperFunctions_NB/genesets_NB.R")
+```
+
+```{r}
+reduction_to_plot <- "umap"
+step <- "06c_post_scVI_TumorZoom_SeuratLabelTransfer_JanskyAdrenalMedulla"
+project <- "NBAtlas"
+```
+
+
+```{r}
+Jansky <- readRDS("/scratch/gent/vo/000/gvo00027/data/Single_Cell_Neuroblastoma/NB_human/Author_processed/Jansky2021_adrenal_medulla/adrenal_medulla_Seurat.RDS")
+Jansky
+```
+
+```{r}
+Jansky$celltype <- Idents(Jansky)
+
+DimPlot(Jansky, reduction = reduction_to_plot, group.by = "celltype")
+ggsave(paste0(output_figures, step, "_UMAP_MedullaDatasetJansky_JanskyAnnotation_", project, ".png"), width = 9, height = 7)
+
+DimPlot(Jansky, reduction = reduction_to_plot, group.by = "celltype", label = T, repel = T)
+ggsave(paste0(output_figures, step, "_UMAP_MedullaDatasetJansky_JanskyAnnotation_Labeled_", project, ".png"), width = 9, height = 7)
+```
+
+```{r}
+NBAtlas <- readRDS("03c_post_scVI_R_plots/Robjects/seuratObj_NBAtlas_share_20230525.rds")
+```
+
+```{r}
+#subset only NE cells
+NBAtlas <- subset(NBAtlas, subset = annot_NBN_scarches == "NE")
+NBAtlas
+gc()
+```
+
+```{r}
+# preprocessing
+# Jansky: already done
+NBAtlas <- NormalizeData(NBAtlas)
+```
+
+```{r}
+anchors <- FindTransferAnchors(reference = Jansky, query = NBAtlas, dims = 1:30, reference.reduction = "pca")
+predictions <- TransferData(anchorset = anchors, refdata = Jansky$celltype, dims = 1:30)
+head(predictions)
+```
+
+```{r}
+saveRDS(predictions, paste0(output_Robjects, step, "_FullAtlasNEsubset_SeuratPredictions_", project, ".rds"))
+saveRDS(anchors, paste0(output_Robjects, step, "_FullAtlasNEsubset_SeuratAnchors_", project, ".rds"))
+```
+
+```{r}
+NBAtlas <- AddMetaData(NBAtlas, metadata = predictions)
+```
+
+```{r}
+percent_data <- data.frame(NBAtlas@meta.data) %>%
+  group_by(predicted.id) %>%
+  summarize(count = n()) %>%
+  mutate(percent = count/sum(count))
+
+percent_data <- percent_data %>% add_row(predicted.id = names(table(Jansky$celltype))[!(names(table(Jansky$celltype)) %in% names(table(NBAtlas$predicted.id)))], 
+                                         count = 0, percent= 0) # add missing data
+
+
+percent_data$predicted.id <- factor(percent_data$predicted.id, levels = rev(c("SCPs","late SCPs","cycling SCPs", "Bridge", "Chromaffin cells", "late Chromaffin cells", "connecting Chromaffin cells", "Neuroblasts","cycling Neuroblasts","late Neuroblasts")))  #add missing levels
+
+ggplot(percent_data, aes(y = predicted.id, x = percent, fill = predicted.id)) + geom_col() + scale_x_continuous(labels = percent_format())+ theme_point
+ggsave(filename = paste0(output_figures, step, "_BarplotPredictedID_FullAtlasNEsubset_9x4_", project, ".pdf"), width = 9, height = 4)
+```
+
