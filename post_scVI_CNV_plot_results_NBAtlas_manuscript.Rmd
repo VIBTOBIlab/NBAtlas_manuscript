@@ -106,6 +106,80 @@ length(rownames(MetaDataForiCNV))
 seuratObj$annot_NBN_iCNV <- "not assigned"
 seuratObj@meta.data[cellnames_intersect,]["annot_NBN_iCNV"] <- MetaDataForiCNV[cellnames_intersect,]["annot_NBN_iCNV"]
 ```
+# SCEVAN
+
+```{r}
+seuratObj$scevan_results <- "not.run"
+```
+
+```{r}
+sampleList <- levels(as.factor(seuratObj$Sample))
+#sampleList <- names(seurat_obj_list)
+
+#samples with too few reference cells (
+# sampleList_scevan <- sampleList[!(sampleList %in% c("Jansky2021_NB08", "Jansky2021_NB10", "Kildisiute2021_10X_PD42752-1", "Kildisiute2021_10X_PD42752-2", "Verhoeven2022_NB01", "Verhoeven2022_NB02", "Verhoeven2022_NB16", "Verhoeven2022_NB21"))]
+sampleList_scevan <- sampleList[!(sampleList %in% c("Jansky2021_NB01", "Jansky2021_NB11", "Jansky2021_NB05", "Jansky2021_NB08", "Jansky2021_NB10", "Kildisiute2021_10X_PD42752-1", "Kildisiute2021_10X_PD42752-2", "Slyper2020_cell_HTAPP_312_SMP_901", "Costa2022_TR2", "Costa2022_TD6"))]
+```
+
+```{r}
+scevan_pred <- readRDS(paste0("03e_post_scVI_SCEVAN_PerSample_NBAtlas/Robjects/03e_post_scVI_SCEVAN_PerSample_NBAtlas_", sampleList_scevan[1], "_results_Robj_NBAtlas.rds"))
+head(scevan_pred)
+table(scevan_pred$class)
+```
+
+
+## Plot per sample
+```{r}
+for (sample in sampleList_scevan){
+  seuratObj$scevan_results <- "not.run"
+  scevan_pred <- readRDS(paste0("03e_post_scVI_SCEVAN_PerSample_NBAtlas/Robjects/03e_post_scVI_SCEVAN_PerSample_NBAtlas_", sample, "_results_Robj_NBAtlas.rds")) #or Robj
+  scevan_pred[scevan_pred == "filtered"] <- "not.defined"
+  #rownames(scevan_pred) <- scevan_pred$cell.names
+  
+  cellnames_intersect <- rownames(scevan_pred)[rownames(scevan_pred) %in% Cells(seuratObj)]
+  seuratObj@meta.data[cellnames_intersect,]["scevan_results"] <- scevan_pred[cellnames_intersect,]["scevan.pred"]
+  
+  my_colors <- hue_pal()(length(levels(factor(seuratObj$scevan_results)))) # setup colors
+  my_colors[ levels(factor(seuratObj$scevan_results)) == "not.run"  ] <- "gray" # gray for NA
+  
+  names(my_colors) <- levels(factor(seuratObj$scevan_results))
+  
+  DimPlot(seuratObj, group.by = "scevan_results") + scale_color_manual(name = "scevan_results", values = my_colors)
+  ggsave(filename = paste0(output_figures, step, "_scevan_Results_", sample, "_", project, ".png"), width = 9, height = 7)
+}
+```
+
+## All
+```{r}
+seuratObj$scevan_results <- "not.run"
+#scevan_pred <- c()
+
+for (sample in sampleList_scevan){
+  scevan_pred <- readRDS(paste0("03e_post_scVI_SCEVAN_PerSample_NBAtlas/Robjects/03e_post_scVI_SCEVAN_PerSample_NBAtlas_", sample, "_results_Robj_NBAtlas.rds")) #or Robj
+  scevan_pred[scevan_pred == "filtered"] <- "not.defined"
+  
+  cellnames_intersect <- rownames(scevan_pred)[rownames(scevan_pred) %in% Cells(seuratObj)]
+  seuratObj@meta.data[cellnames_intersect,]["scevan_results"] <- scevan_pred[cellnames_intersect,]["class"]
+}
+table(seuratObj$scevan_results)
+```
+
+```{r}
+seuratObj$scevan_results_f <- factor(seuratObj$scevan_results, levels = c("tumor", "normal", "not.defined", "not.run"))
+
+my_colors <- hue_pal()(length(levels(factor(seuratObj$scevan_results_f)))) # setup colors
+my_colors[ levels(factor(seuratObj$scevan_results_f)) == "not.run"  ] <- "#ACC6CF" # lightblue for not run
+my_colors[ levels(factor(seuratObj$scevan_results_f)) == "not.defined"  ] <- "darkgray" # gray for NA
+
+names(my_colors) <- levels(factor(seuratObj$scevan_results_f))
+
+DimPlot(seuratObj, group.by = "scevan_results_f") + scale_color_manual(name = "scevan_results", values = my_colors)
+ggsave(filename = paste0(output_figures, step, "_scevan_Results_AllSamples_", project, ".png"), width = 9, height = 7)
+
+DimPlot(seuratObj, group.by = "scevan_results", raster = FALSE) + scale_color_manual(name = "scevan_results", values = my_colors)
+ggsave(filename = paste0(output_figures, step, "_scevan_Results_AllSamples_HD_", project, ".png"), width = 15, height = 12)
+```
+
 # InferCNV
 ## Score
 ```{r}
