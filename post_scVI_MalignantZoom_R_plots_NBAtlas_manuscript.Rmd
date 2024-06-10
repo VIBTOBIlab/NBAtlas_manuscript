@@ -95,12 +95,102 @@ ggsave(filename = paste0(step, "_UMAP_MYCN_BlueBlack",  project, ".png"), path =
 
 # Gene sets
 
+## FGSEA
+### Reactome
+```{r}
+gs_collection_name <- "Reactome"
+reactome_gs <- msigdbr::msigdbr(species = "Homo sapiens", category = "C2", subcategory = "REACTOME") 
+updated_gene_symbol <- update_geneSet_NBAtlas(reactome_gs$gene_symbol)# update genes
+reactome_gs$gene_symbol <- updated_gene_symbol
+term2gene <- reactome_gs %>% dplyr::select(gs_name, gene_symbol)
+gene_set_list <- term2gene %>% group_by(gs_name) %>% summarize(all.genes = list(unique(gene_symbol))) %>% deframe() #convert to list
+```
+```{r}
+cluster_levels <- levels(as.factor(seuratObj$cluster_nr))
+fgseaRes_results <- list()
+fgseaRes_results_sign <- list()
+for (c in cluster_levels){
+  ranks <- findmarkers_results[[c]]$score #based on score
+  names(ranks) <- rownames(findmarkers_results[[c]])
+  
+  fgseaRes <- fgsea(pathways = gene_set_list, stats = ranks,
+                    minSize=10,maxSize=500,scoreType="pos",nproc=1)
+  fgseaRes$minlog10padj <- -log10(fgseaRes$pval)
+  fgseaRes$pathway <- gsub(pattern = "REACTOME_", x = fgseaRes$pathway, replacement = "")
+  n_sign_genes <- sum(fgseaRes$padj <= 0.1)
+  if (n_sign_genes > 30 ){n_sign_genes = 30}
+  if (n_sign_genes > 0 ){
+    fgseaRes_ordered <- fgseaRes %>% filter(fgseaRes$padj <= 0.1) %>% arrange(desc(NES)) %>% dplyr::slice(1:n_sign_genes) # take first 30 sign
+    ggplot(fgseaRes_ordered, aes(x = reorder(pathway,NES), y = NES, fill = minlog10padj)) + geom_col() + coord_flip() + scale_fill_viridis() + xlab("") + ggtitle(c) + theme_point # dotplot
+    ggsave(filename = paste0(output_figures, step, "_fgsea_FDR-0p1_", gs_collection_name, "_", c, "_", project, ".svg" ), width = 10, height = 5)
+    fgseaRes_results[[c]] <- fgseaRes_ordered
+  fgseaRes_results_sign[[c]] <- fgseaRes_ordered[fgseaRes_ordered$padj < 0.1,]
+  } else {
+    print(paste0("No FDR < 0.1 gene sets found for ", c))
+  }
+}
+saveRDS(fgseaRes_results, file = paste0(output_Robjects, step, "_fgsea_FDR-0p1_", gs_collection_name, "_", project, ".rds"))
+openxlsx::write.xlsx(fgseaRes_results_sign, file = paste0(output_tables, step, "_fgsea_FDR-0p1_", gs_collection_name, "_", project, ".xlsx"), overwrite = T)
+rm(gs_collection_name, gene_set_list)
+```
+
+### ChEA2022
+```{r}
+ChEA2022_gmt <- GSA.read.gmt("/data/gent/vo/000/gvo00027/vsc44341/R_HelperFunctions_NB/ChEA_2022_geneSetLibrary.gmt") # from https://maayanlab.cloud/Enrichr/geneSetLibrary?mode=text&libraryName=ChEA_2022
+ChEA2022_list <- as.list(ChEA2022_gmt$genesets)
+names(ChEA2022_list) <- ChEA2022_gmt$geneset.names 
+geneset_collection <- ChEA2022_list
+gs_collection_name <- "ChEA2022"
+set_name_vector <- character()
+gene_id_vector <- character()
+for (set_name in names(geneset_collection)) {
+  gene_ids <- unlist(geneset_collection[[set_name]])
+  gene_ids <- gene_ids[nchar(gene_ids) >0]# remove empty elements
+  set_name_vector <- c(set_name_vector, rep(set_name, length(gene_ids)))
+  gene_id_vector <- c(gene_id_vector, gene_ids)
+}
+geneset_collection_df <- data.frame(gs_name = set_name_vector, gene_symbol = gene_id_vector, stringsAsFactors = FALSE)
+updated_gene_symbol <- update_geneSet_NBAtlas(geneset_collection_df$gene_symbol)
+any(is.na(updated_gene_symbol))
+geneset_collection_df$gene_symbol <- updated_gene_symbol
+term2gene <- geneset_collection_df %>% dplyr::select(gs_name, gene_symbol)
+gene_set_list <- term2gene %>% group_by(gs_name) %>% summarize(all.genes = list(unique(gene_symbol))) %>% deframe() #convert to list
+```
+```{r}
+cluster_levels <- levels(as.factor(seuratObj$cluster_nr))
+fgseaRes_results <- list()
+fgseaRes_results_sign <- list()
+for (c in cluster_levels){
+  ranks <- findmarkers_results[[c]]$score #based on score
+  names(ranks) <- rownames(findmarkers_results[[c]])
+  
+  fgseaRes <- fgsea(pathways = gene_set_list, stats = ranks,
+                    minSize=10, maxSize=500, scoreType="pos", nproc=1)
+  fgseaRes$minlog10padj <- -log10(fgseaRes$pval)
+  fgseaRes$pathway <- gsub(pattern = "REACTOME_", x = fgseaRes$pathway, replacement = "")
+  n_sign_genes <- sum(fgseaRes$padj <= 0.1)
+  if (n_sign_genes > 30 ){n_sign_genes = 30}
+  if (n_sign_genes > 0 ){
+    fgseaRes_ordered <- fgseaRes %>% filter(fgseaRes$padj <= 0.1) %>% arrange(desc(NES)) %>% dplyr::slice(1:n_sign_genes) # take first 30 sign
+    ggplot(fgseaRes_ordered, aes(x = reorder(pathway,NES), y = NES, fill = minlog10padj)) + geom_col() + coord_flip() + scale_fill_viridis() + xlab("") + ggtitle(c) + theme_point
+    ggsave(filename = paste0(output_figures, step, "_fgsea_FDR-0p1_", gs_collection_name, "_", c, "_", project, ".svg" ), width = 10, height = 5)
+    fgseaRes_results[[c]] <- fgseaRes_ordered
+  fgseaRes_results_sign[[c]] <- fgseaRes_ordered[fgseaRes_ordered$padj < 0.1,]
+  } else {
+    print(paste0("No FDR < 0.1 gene sets found for ", c))
+  }
+}
+saveRDS(fgseaRes_results, file = paste0(output_Robjects, step, "_fgsea_FDR-0p1_", gs_collection_name, "_", project, ".rds"))
+openxlsx::write.xlsx(fgseaRes_results_sign, file = paste0(output_tables, step, "_fgsea_FDR-0p1_", gs_collection_name, "_", project, ".xlsx"), overwrite = T)
+rm(gs_collection_name, gene_set_list)
+```
+
+## Signatures
+
 ```{r}
 # reload
 ranks <- readRDS("09c_post_scVI_MalignantZoom_R_CalcUCellRanks_NBAtlas/Robjects/09c_post_scVI_MalignantZoom_R_UCellPreCompRanks_NBAtlas.rds") #CalcUCellRanks_NBAtlas script 
 ```
-
-
 
 ## Gavish 2023
 ```{r}

@@ -308,10 +308,6 @@ saveRDS(enrichIt_MPs, file = paste0(output_Robjects, step, "_enrichIT_UCell_NMF_
 ```{r}
 enrichIt_MPs <- readRDS(paste0(output_Robjects, step, "_enrichIT_UCell_NMF_MPs", project, ".rds"))
 seuratObj <- AddMetaData(seuratObj, enrichIt_MPs)
-
-#omit technical MPs
-enrichIt_MPs$MP_3 <- NULL
-seuratObj$MP_3 <- NULL
 ```
 
 ```{r}
